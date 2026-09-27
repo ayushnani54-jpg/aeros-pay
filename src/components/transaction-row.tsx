@@ -1,8 +1,11 @@
 import type { Transaction } from "@/db/schema";
 import { CURRENCY_NAME } from "@/lib/constants";
 
-function partyLabel(type: "USER" | "GOVERNMENT", username: string): string {
-  return type === "GOVERNMENT" ? "Government" : `@${username}`;
+type PartyType = "USER" | "GOVERNMENT" | "COMPANY";
+
+function partyLabel(type: PartyType, username: string): string {
+  if (type === "GOVERNMENT") return "Government";
+  return `@${username}`;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -11,19 +14,42 @@ const TYPE_LABELS: Record<string, string> = {
   ADMIN_ADJUSTMENT_CREDIT: "Administrative credit",
   ADMIN_ADJUSTMENT_DEBIT: "Administrative debit",
   ISSUANCE_CREDIT: "Aeros issuance",
+  COMPANY_FUNDING: "Company funding",
+  COMPANY_SALE: "Company sale",
+  COMPANY_PAYMENT: "Company payment",
+  INVOICE_PAYMENT: "Invoice payment",
+  GOVERNMENT_PAYMENT: "Government payment",
+  GOVERNMENT_RECEIPT: "Payment to Government",
+  COMPANY_ADJUSTMENT_CREDIT: "Company administrative credit",
+  COMPANY_ADJUSTMENT_DEBIT: "Company administrative debit",
+  COMPANY_SALE_PURCHASE: "Company purchase",
+  LOAN_DISBURSEMENT: "Loan disbursement",
+  LOAN_REPAYMENT: "Loan repayment",
 };
 
 export function TransactionRow({
   tx,
   viewerUsername,
+  viewerId,
 }: {
   tx: Transaction;
+  /** Username of the wallet being viewed (user or company). */
   viewerUsername?: string;
+  /** Id of the wallet being viewed — more reliable than the username. */
+  viewerId?: string;
 }) {
-  const isOutgoing = viewerUsername ? tx.senderUsername === viewerUsername && tx.senderType === "USER" : undefined;
-  const isIncoming = viewerUsername
-    ? tx.receiverUsername === viewerUsername && tx.receiverType === "USER"
-    : undefined;
+  const matchesViewer = (
+    partyId: string | null,
+    partyUsername: string,
+    partyType: PartyType,
+  ): boolean => {
+    if (partyType === "GOVERNMENT") return false;
+    if (viewerId && partyId) return partyId === viewerId;
+    return viewerUsername ? partyUsername === viewerUsername : false;
+  };
+
+  const isOutgoing = matchesViewer(tx.senderId, tx.senderUsername, tx.senderType);
+  const isIncoming = matchesViewer(tx.receiverId, tx.receiverUsername, tx.receiverType);
 
   let amountDisplay: string;
   let amountClass: string;
@@ -39,9 +65,9 @@ export function TransactionRow({
   }
 
   return (
-    <div className="flex items-center justify-between py-3 text-sm">
-      <div>
-        <p className="font-medium">
+    <div className="flex items-center justify-between gap-3 py-3 text-sm">
+      <div className="min-w-0">
+        <p className="truncate font-medium">
           {partyLabel(tx.senderType, tx.senderUsername)}
           <span className="mx-1 text-muted">→</span>
           {partyLabel(tx.receiverType, tx.receiverUsername)}
@@ -50,8 +76,9 @@ export function TransactionRow({
           {TYPE_LABELS[tx.type] ?? tx.type} · {tx.txRef} ·{" "}
           {new Date(tx.createdAt).toLocaleString()}
         </p>
+        {tx.reason && <p className="truncate text-xs text-muted">{tx.reason}</p>}
       </div>
-      <div className="text-right">
+      <div className="shrink-0 text-right">
         <p className={`font-mono font-medium ${amountClass}`}>
           {amountDisplay} {CURRENCY_NAME}
         </p>

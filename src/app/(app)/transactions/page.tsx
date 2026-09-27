@@ -1,27 +1,44 @@
-import { getCurrentUser } from "@/lib/auth";
-import { getRecentTransactionsForUser } from "@/lib/queries";
+import { getActingContext } from "@/lib/auth";
+import { getTransactionsForWallet } from "@/lib/queries";
 import { TransactionRow } from "@/components/transaction-row";
 
 export default async function TransactionsPage() {
-  const user = await getCurrentUser();
-  if (!user) return null;
+  const ctx = await getActingContext();
+  if (!ctx) return null;
 
-  const txs = await getRecentTransactionsForUser(user.id, 200);
+  const { user, company } = ctx;
+  const transactions = await getTransactionsForWallet(
+    company ? company.id : user.id,
+    company ? "COMPANY" : "USER",
+    200,
+  );
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Transactions</h1>
-      <div className="card p-5">
-        {txs.length === 0 ? (
-          <p className="text-sm text-muted">No transactions yet.</p>
-        ) : (
-          <div className="divide-y divide-border">
-            {txs.map((tx) => (
-              <TransactionRow key={tx.id} tx={tx} viewerUsername={user.username} />
-            ))}
-          </div>
-        )}
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Activity</h1>
+        <p className="mt-1 text-sm text-muted">
+          Every payment for {company ? company.name : "your personal wallet"} ({ctx.handle}).
+          Records here are permanent and can never be edited.
+        </p>
       </div>
+
+      {transactions.length === 0 ? (
+        <div className="card p-6">
+          <p className="text-sm text-muted">No transactions yet.</p>
+        </div>
+      ) : (
+        <div className="card divide-y divide-border px-5">
+          {transactions.map((tx) => (
+            <TransactionRow
+              key={tx.id}
+              tx={tx}
+              viewerId={company ? company.id : user.id}
+              viewerUsername={company ? company.username : user.username}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -81,10 +81,11 @@ async function main() {
   }
   const progress = await getApprovalProgress(request.id);
   console.log("Approval progress:", progress);
-  if (progress.fullyApproved) {
-    console.log("PASS [100% approval reached]");
+  // V2: a simple majority passes, not unanimity.
+  if (progress.thresholdReached) {
+    console.log("PASS [majority threshold reached]");
   } else {
-    console.log("FAIL [100% approval reached]:", progress);
+    console.log("FAIL [majority threshold reached]:", progress);
   }
 
   // 7. Execute — should succeed now
@@ -148,10 +149,11 @@ async function main() {
     await castIssuanceVote({ requestId: request3.id, userId: u.id, vote: "APPROVE" });
   }
   const progress3 = await getApprovalProgress(request3.id);
-  if (!progress3.fullyApproved && progress3.rejectCount === 1) {
-    console.log("PASS [single rejection blocks 100% approval]:", progress3);
+  // V2: one rejection no longer blocks on its own — a majority still decides.
+  if (progress3.rejectCount === 1) {
+    console.log("PASS [rejection recorded, majority still decides]:", progress3);
   } else {
-    console.log("FAIL [single rejection blocks 100% approval]:", progress3);
+    console.log("FAIL [rejection recorded]:", progress3);
   }
 
   await pool.end();

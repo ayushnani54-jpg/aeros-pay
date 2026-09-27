@@ -1,54 +1,136 @@
-import { getGovernmentSingleton, getRecentAuditLogs } from "@/lib/queries";
+import Link from "next/link";
+import { getAllCompaniesForGovernment, getGovernmentSingleton, getRecentAuditLogs } from "@/lib/queries";
 import { TaxRateForm } from "@/components/forms/tax-rate-form";
+import { CompanyDefaultTaxForm } from "@/components/forms/gov-forms";
 import { formatTaxRateBp } from "@/lib/tax";
+import { CURRENCY_NAME } from "@/lib/constants";
 
 export default async function GovTaxPage() {
-  const [gov, auditLogs] = await Promise.all([
+  const [gov, companies, auditLogs] = await Promise.all([
     getGovernmentSingleton(),
-    getRecentAuditLogs(500),
+    getAllCompaniesForGovernment(),
+    getRecentAuditLogs(200),
   ]);
-  const taxChanges = auditLogs.filter((a) => a.action === "TAX_RATE_CHANGED");
+
+  if (!gov) {
+    return (
+      <div className="card p-6">
+        <p className="text-sm text-muted">The Government account is not initialized.</p>
+      </div>
+    );
+  }
+
+  const taxHistory = auditLogs.filter((log) =>
+    ["TAX_RATE_CHANGED", "COMPANY_TAX_DEFAULT_CHANGED", "COMPANY_TAX_RATE_CHANGED"].includes(
+      log.action,
+    ),
+  );
+
+  const withOverride = companies.filter((c) => c.company.taxRateBp !== null);
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Tax Configuration</h1>
-
-      <section className="card p-5">
-        <p className="text-sm text-muted">Current rate</p>
-        <p className="mt-1 text-2xl font-semibold">{gov ? formatTaxRateBp(gov.taxRateBp) : "—"}</p>
-        <p className="mt-1 text-xs text-muted">
-          A payment of exactly 1 Aeros is always tax-free, regardless of this rate.
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Taxes</h1>
+        <p className="mt-1 text-sm text-muted">
+          Changing a rate only affects future transactions. Every past transaction permanently
+          keeps the rate that applied when it happened.
         </p>
+      </div>
+
+      <section className="grid gap-3 sm:grid-cols-2">
+        <div className="card p-5">
+          <h2 className="mb-1 font-medium">Personal tax</h2>
+          <p className="mb-4 text-sm text-muted">
+            Applies to user-to-user payments. A payment of exactly 1 {CURRENCY_NAME} is always
+            tax-free.
+          </p>
+          <TaxRateForm currentPercent={gov.taxRateBp / 100} />
+        </div>
+
+        <div className="card p-5">
+          <h2 className="mb-1 font-medium">Default company tax</h2>
+          <p className="mb-4 text-sm text-muted">
+            Used for any company that has no rate of its own.
+          </p>
+          <CompanyDefaultTaxForm currentPercent={gov.companyTaxRateBp / 100} />
+        </div>
       </section>
 
       <section className="card p-5">
-        <h2 className="mb-3 font-medium">Change tax rate</h2>
-        <TaxRateForm currentPercent={gov ? gov.taxRateBp / 100 : 0} />
+        <h2 className="mb-3 font-medium">How tax is applied</h2>
+        <dl className="space-y-1 text-sm">
+          <Rule rule="User → User" value={`${formatTaxRateBp(gov.taxRateBp)} (personal rate)`} />
+          <Rule rule="User → Company" value="The receiving company's rate" />
+          <Rule rule="Company → User" value="The sending company's rate" />
+          <Rule rule="Company → Company" value="The sending company's rate" />
+          <Rule rule="Government → anyone" value="Tax-free" />
+          <Rule rule="Anyone → Government" value="Tax-free" />
+          <Rule rule="Invoices" value="Company rate, added on top of the quoted price" />
+        </dl>
       </section>
 
       <section className="card p-5">
-        <h2 className="mb-3 font-medium">Tax rate change history</h2>
-        {taxChanges.length === 0 ? (
-          <p className="text-sm text-muted">No changes recorded yet.</p>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="font-medium">Per-company rates</h2>
+          <Link
+            href="/gov/companies"
+            className="text-sm font-medium text-muted hover:text-foreground"
+          >
+            All companies
+          </Link>
+        </div>
+        {withOverride.length === 0 ? (
+          <p className="text-sm text-muted">
+            No company has a custom rate — all use the {formatTaxRateBp(gov.companyTaxRateBp)}{" "}
+            default.
+          </p>
         ) : (
-          <ul className="space-y-2 text-sm">
-            {taxChanges.map((a) => {
-              const meta = a.metadata as { previousRateBp?: number; newRateBp?: number } | null;
-              return (
-                <li key={a.id} className="flex items-center justify-between">
-                  <span>
-                    {meta?.previousRateBp !== undefined
-                      ? formatTaxRateBp(meta.previousRateBp)
-                      : "—"}{" "}
-                    → {meta?.newRateBp !== undefined ? formatTaxRateBp(meta.newRateBp) : "—"}
-                  </span>
-                  <span className="text-muted">{new Date(a.createdAt).toLocaleString()}</span>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="divide-y divide-border">
+            {withOverride.map(({ company }) => (
+              <Link
+                key={company.id}
+                href={`/gov/companies/${company.id}`}
+                className="flex items-center justify-between gap-3 py-3 text-sm hover:underline"
+              >
+                <div>
+                  <p className="font-medium">{company.name}</p>
+                  <p className="text-xs text-muted">@{company.username}</p>
+                </div>
+                <span className="font-mono">{formatTaxRateBp(company.taxRateBp ?? 0)}</span>
+              </Link>
+            ))}
+          </div>
         )}
       </section>
+
+      <section className="card p-5">
+        <h2 className="mb-3 font-medium">Change history</h2>
+        {taxHistory.length === 0 ? (
+          <p className="text-sm text-muted">No tax changes recorded yet.</p>
+        ) : (
+          <div className="divide-y divide-border">
+            {taxHistory.map((log) => (
+              <div key={log.id} className="py-3 text-sm">
+                <p className="font-medium">{log.action.replace(/_/g, " ")}</p>
+                <p className="text-xs text-muted">
+                  {log.previousValue ?? "—"} → {log.newValue ?? "—"} · {log.actorLabel} ·{" "}
+                  {new Date(log.createdAt).toLocaleString()}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function Rule({ rule, value }: { rule: string; value: string }) {
+  return (
+    <div className="flex flex-wrap justify-between gap-2">
+      <dt className="text-muted">{rule}</dt>
+      <dd className="text-right">{value}</dd>
     </div>
   );
 }

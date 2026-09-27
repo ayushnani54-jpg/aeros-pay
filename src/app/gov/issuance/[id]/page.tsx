@@ -17,8 +17,9 @@ export default async function GovIssuanceDetailPage({
     getIssuanceVotesDetailed(request.id),
   ]);
 
+  // V2: a simple majority of eligible voters is enough (spec §37).
   const canExecute =
-    request.status === "OPEN" && progress.fullyApproved && progress.eligibleCount > 0;
+    request.status === "OPEN" && progress.thresholdReached && progress.eligibleCount > 0;
 
   return (
     <div className="space-y-6">
@@ -34,7 +35,8 @@ export default async function GovIssuanceDetailPage({
 
       <section className="card p-5">
         <p className="text-sm text-muted">
-          {progress.approveCount} of {progress.eligibleCount} eligible users approved
+          {progress.approveCount} approvals · {progress.requiredToPass} needed to pass ·{" "}
+          {progress.eligibleCount} eligible voters
         </p>
         <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-surface">
           <div

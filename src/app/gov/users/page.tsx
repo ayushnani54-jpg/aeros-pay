@@ -7,7 +7,7 @@ export default async function GovUsersPage() {
   const allUsers = await getAllUsers();
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <h1 className="text-xl font-semibold">Users</h1>
       <div className="card overflow-x-auto">
         <table className="w-full text-left text-sm">
@@ -33,7 +33,7 @@ export default async function GovUsersPage() {
                   {u.balance.toLocaleString()} {CURRENCY_NAME}
                 </td>
                 <td className="px-4 py-3">
-                  <StatusBadge status={u.status} />
+                  <StatusBadge status={u.effectiveStatus} />
                 </td>
                 <td className="px-4 py-3 text-muted">
                   {new Date(u.createdAt).toLocaleDateString()}

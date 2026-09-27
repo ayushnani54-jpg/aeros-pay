@@ -1,56 +1,124 @@
 import Link from "next/link";
-import { getCurrentUser } from "@/lib/auth";
-import { getOpenIssuanceRequestsForUser, getRecentTransactionsForUser } from "@/lib/queries";
+import { getActingContext } from "@/lib/auth";
+import {
+  getOpenIssuanceRequestsForUser,
+  getTransactionsForWallet,
+} from "@/lib/queries";
+import { getInvoicesForBuyer } from "@/lib/invoices";
+import { getPendingOffersForOwner } from "@/lib/sales";
+import { getOutstandingInstalmentsForOwner } from "@/lib/queries";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { TransactionRow } from "@/components/transaction-row";
 import { StatusBadge } from "@/components/status-badge";
+import { WalletSwitcher } from "@/components/wallet-switcher";
+import { effectiveUserStatus } from "@/lib/status";
+import { runLoanMaintenance } from "@/lib/loans";
 
 export default async function DashboardPage() {
-  const user = await getCurrentUser();
-  if (!user) return null;
+  const ctx = await getActingContext();
+  if (!ctx) return null;
 
-  const [recentTx, openIssuances] = await Promise.all([
-    getRecentTransactionsForUser(user.id, 5),
-    getOpenIssuanceRequestsForUser(user.id),
-  ]);
+  const { user, company } = ctx;
+
+  // Keeps overdue flags and reminders current without needing a scheduler.
+  if (ctx.availableCompanies.length > 0) {
+    await runLoanMaintenance().catch(() => undefined);
+  }
+
+  const [recentTx, openIssuances, pendingInvoices, pendingOffers, dueInstalments] =
+    await Promise.all([
+      getTransactionsForWallet(
+        company ? company.id : user.id,
+        company ? "COMPANY" : "USER",
+        5,
+      ),
+      getOpenIssuanceRequestsForUser(user.id),
+      getInvoicesForBuyer(user.id, 20),
+      getPendingOffersForOwner(user.id),
+      getOutstandingInstalmentsForOwner(user.id),
+    ]);
 
   const pendingVotes = openIssuances.filter((row) => !row.myVote);
+  const unpaidInvoices = pendingInvoices.filter((r) => r.invoice.status === "PENDING");
+  const overdue = dueInstalments.filter((r) => r.instalment.status === "OVERDUE");
 
   return (
     <div className="space-y-6">
       <section className="card p-6">
-        <p className="text-sm text-muted">Your balance</p>
-        <p className="mt-1 text-4xl font-semibold tracking-tight">
-          {user.balance.toLocaleString()} <span className="text-xl font-medium text-muted">{CURRENCY_NAME}</span>
+        <p className="text-sm text-muted">
+          {company ? `${company.name} balance` : "Your balance"}
         </p>
-        <div className="mt-3">
-          <StatusBadge status={user.status} />
+        <p className="mt-1 text-4xl font-semibold tracking-tight">
+          {ctx.balance.toLocaleString()}{" "}
+          <span className="text-xl font-medium text-muted">{CURRENCY_NAME}</span>
+        </p>
+        <div className="mt-3 flex items-center gap-2">
+          <StatusBadge status={effectiveUserStatus(user)} />
+          <span className="text-sm text-muted">{ctx.handle}</span>
         </div>
       </section>
 
+      <WalletSwitcher
+        companies={ctx.availableCompanies}
+        activeCompanyId={company?.id ?? null}
+        personalLabel={user.displayName}
+      />
+
+      {/* Things that need the person's attention, in priority order. */}
+      {overdue.length > 0 && (
+        <Alert
+          tone="danger"
+          title={`${overdue.length} overdue loan instalment${overdue.length === 1 ? "" : "s"}`}
+          body="A repayment is past its due date. Pay it to avoid further Government action."
+          href="/my-company/loans"
+          cta="View loans"
+        />
+      )}
+
+      {pendingOffers.length > 0 && (
+        <Alert
+          tone="normal"
+          title={`${pendingOffers.length} offer${pendingOffers.length === 1 ? "" : "s"} to buy your company`}
+          body="Someone wants to buy a company you own. Nothing happens unless you accept."
+          href="/my-company/sale"
+          cta="Review offers"
+        />
+      )}
+
+      {unpaidInvoices.length > 0 && (
+        <Alert
+          tone="normal"
+          title={`${unpaidInvoices.length} unpaid invoice${unpaidInvoices.length === 1 ? "" : "s"}`}
+          body="A company has sent you an invoice."
+          href="/invoices"
+          cta="View invoices"
+        />
+      )}
+
       {pendingVotes.length > 0 && (
-        <section className="card border-[#111111] p-5">
-          <h2 className="font-medium">Aeros issuance vote requested</h2>
-          <p className="mt-1 text-sm text-muted">
-            The Government has proposed new Aeros issuance and needs your vote.
-          </p>
-          <Link href="/updates" className="mt-3 inline-block btn btn-primary text-sm">
-            Review and vote
-          </Link>
-        </section>
+        <Alert
+          tone="normal"
+          title="Aeros issuance vote requested"
+          body="The Government has proposed new Aeros issuance and needs your vote."
+          href="/updates"
+          cta="Review and vote"
+        />
       )}
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <QuickAction href="/send" label="Send Aeros" />
-        <QuickAction href="/transactions" label="Transactions" />
-        <QuickAction href="/profile" label="Profile" />
-        <QuickAction href="/updates" label="Updates" />
+        <QuickAction href="/pay" label="Pay" />
+        <QuickAction href="/people" label="People" />
+        <QuickAction href="/companies" label="Companies" />
+        <QuickAction href="/transactions" label="Activity" />
       </section>
 
       <section className="card p-5">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-medium">Recent transactions</h2>
-          <Link href="/transactions" className="text-sm font-medium text-muted hover:text-foreground">
+          <h2 className="font-medium">Recent activity</h2>
+          <Link
+            href="/transactions"
+            className="text-sm font-medium text-muted hover:text-foreground"
+          >
             View all
           </Link>
         </div>
@@ -59,7 +127,12 @@ export default async function DashboardPage() {
         ) : (
           <div className="divide-y divide-border">
             {recentTx.map((tx) => (
-              <TransactionRow key={tx.id} tx={tx} viewerUsername={user.username} />
+              <TransactionRow
+                key={tx.id}
+                tx={tx}
+                viewerId={company ? company.id : user.id}
+                viewerUsername={company ? company.username : user.username}
+              />
             ))}
           </div>
         )}
@@ -74,7 +147,7 @@ export default async function DashboardPage() {
           <dd className="font-mono">@{user.username}</dd>
           <dt className="text-muted">Status</dt>
           <dd>
-            <StatusBadge status={user.status} />
+            <StatusBadge status={effectiveUserStatus(user)} />
           </dd>
           <dt className="text-muted">Registered</dt>
           <dd>{new Date(user.createdAt).toLocaleDateString()}</dd>
@@ -84,9 +157,36 @@ export default async function DashboardPage() {
   );
 }
 
+function Alert({
+  tone,
+  title,
+  body,
+  href,
+  cta,
+}: {
+  tone: "normal" | "danger";
+  title: string;
+  body: string;
+  href: string;
+  cta: string;
+}) {
+  return (
+    <section className={`card p-5 ${tone === "danger" ? "border-[#e3b3ae]" : "border-[#111111]"}`}>
+      <h2 className={`font-medium ${tone === "danger" ? "text-danger" : ""}`}>{title}</h2>
+      <p className="mt-1 text-sm text-muted">{body}</p>
+      <Link href={href} className="btn btn-primary mt-3 inline-block text-sm">
+        {cta}
+      </Link>
+    </section>
+  );
+}
+
 function QuickAction({ href, label }: { href: string; label: string }) {
   return (
-    <Link href={href} className="card flex items-center justify-center p-4 text-center text-sm font-medium hover:bg-surface">
+    <Link
+      href={href}
+      className="card flex items-center justify-center p-4 text-center text-sm font-medium hover:bg-surface"
+    >
       {label}
     </Link>
   );

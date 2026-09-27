@@ -8,16 +8,17 @@ import {
   transactions,
   users,
 } from "@/db/schema";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, ne, sql } from "drizzle-orm";
 import {
   ISSUANCE_COOLDOWN_DAYS,
   MAX_ISSUANCE_AMOUNT,
   MIN_ISSUANCE_AMOUNT,
 } from "./constants";
 import { recordAudit } from "./audit";
-import { notifyAllActiveUsers, notifyUser } from "./notify";
+import { notifyEligibleVoters, notifyUser, publishUpdate } from "./notify";
 import { nextTxRef } from "./txref";
 import { isUniqueViolation } from "./db-errors";
+import { effectiveUserStatus, healExpiredSuspensions } from "./status";
 
 export class IssuanceError extends Error {
   constructor(message: string) {
@@ -25,7 +26,6 @@ export class IssuanceError extends Error {
     this.name = "IssuanceError";
   }
 }
-
 
 /** True if any issuance was executed within the last N days. */
 async function hasRecentExecution(
@@ -51,6 +51,7 @@ export async function createIssuanceRequest(params: {
   governmentUsername: string;
   amount: number;
   reason: string;
+  note?: string | null;
 }) {
   const { governmentId, governmentUsername, amount, reason } = params;
 
@@ -61,14 +62,28 @@ export async function createIssuanceRequest(params: {
     throw new IssuanceError(`Issuance amount cannot exceed ${MAX_ISSUANCE_AMOUNT} Aeros.`);
   }
 
+  // Make sure elapsed timed suspensions are reflected before we snapshot the
+  // electorate, so a user whose suspension just expired is not wrongly
+  // excluded from the vote.
+  await healExpiredSuspensions();
+
   return db.transaction(async (tx) => {
-    // Snapshot every currently-active user as an eligible voter. This
-    // snapshot is immutable from here on — the Government cannot add or
-    // remove voters from an open request.
-    const eligible = await tx
-      .select({ id: users.id })
+    // Snapshot every currently-eligible user as a voter. This snapshot is
+    // immutable from here on — the Government cannot add or remove voters
+    // from an open request (spec §36).
+    //
+    // Eligible = registered, not banned, not (still) suspended. The
+    // Government is not a voter.
+    const candidates = await tx
+      .select({
+        id: users.id,
+        status: users.status,
+        suspendedUntil: users.suspendedUntil,
+      })
       .from(users)
-      .where(eq(users.status, "ACTIVE"));
+      .where(ne(users.status, "BANNED"));
+
+    const eligible = candidates.filter((u) => effectiveUserStatus(u) === "ACTIVE");
 
     if (eligible.length === 0) {
       throw new IssuanceError(
@@ -78,7 +93,7 @@ export async function createIssuanceRequest(params: {
 
     const [request] = await tx
       .insert(issuanceRequests)
-      .values({ amount, reason })
+      .values({ amount, reason, note: params.note ?? null })
       .returning();
 
     await tx.insert(issuanceEligibleVoters).values(
@@ -92,13 +107,16 @@ export async function createIssuanceRequest(params: {
       actorLabel: governmentUsername,
       targetType: "ISSUANCE_REQUEST",
       targetId: request.id,
+      newValue: String(amount),
+      reason,
       metadata: { amount, reason, eligibleVoterCount: eligible.length },
     });
 
-    await notifyAllActiveUsers(
+    await notifyEligibleVoters(
       tx,
       "ISSUANCE_VOTE_REQUESTED",
-      `Government requested ${amount} Aeros issuance: "${reason}". Please cast your vote.`,
+      `Government requested ${amount.toLocaleString()} Aeros issuance: "${reason}". Please cast your vote.`,
+      "/updates",
     );
 
     return request;
@@ -137,6 +155,8 @@ export async function castIssuanceVote(params: {
       throw new IssuanceError("You are not eligible to vote on this request.");
     }
 
+    // A vote is immutable once cast (spec §36) — the unique index is what
+    // actually enforces that, so a double-submit cannot overwrite a vote.
     try {
       await tx.insert(issuanceVotes).values({ requestId, userId, vote });
     } catch (e) {
@@ -153,33 +173,62 @@ export type ApprovalProgress = {
   approveCount: number;
   rejectCount: number;
   pendingCount: number;
-  fullyApproved: boolean;
+  /** Votes needed for a simple majority of the eligible electorate. */
+  requiredToPass: number;
+  /** True once approvals exceed half the eligible voters. */
+  thresholdReached: boolean;
+  /** True once enough rejections exist that a majority is impossible. */
+  outcomeDecidedAgainst: boolean;
 };
+
+/**
+ * V2 THRESHOLD CHANGE (spec §37)
+ * ------------------------------
+ * V1 required unanimous approval from every eligible voter. V2 uses a simple
+ * majority: `approvals > eligible / 2`.
+ *
+ * Non-voters are NOT counted as approvals — abstaining is neutral, so a
+ * request with 5 eligible voters needs 3 approvals whether the other two
+ * reject or simply never vote.
+ *
+ * This is an intentional, spec-mandated behaviour change from V1, applied to
+ * open requests as well as new ones.
+ */
+export function requiredMajority(eligibleCount: number): number {
+  return Math.floor(eligibleCount / 2) + 1;
+}
 
 export async function getApprovalProgress(
   requestId: string,
 ): Promise<ApprovalProgress> {
-  const eligibleRows = await db
-    .select({ userId: issuanceEligibleVoters.userId })
-    .from(issuanceEligibleVoters)
-    .where(eq(issuanceEligibleVoters.requestId, requestId));
-
-  const voteRows = await db
-    .select({ vote: issuanceVotes.vote })
-    .from(issuanceVotes)
-    .where(eq(issuanceVotes.requestId, requestId));
+  const [eligibleRows, voteRows] = await Promise.all([
+    db
+      .select({ userId: issuanceEligibleVoters.userId })
+      .from(issuanceEligibleVoters)
+      .where(eq(issuanceEligibleVoters.requestId, requestId)),
+    db
+      .select({ vote: issuanceVotes.vote })
+      .from(issuanceVotes)
+      .where(eq(issuanceVotes.requestId, requestId)),
+  ]);
 
   const eligibleCount = eligibleRows.length;
   const approveCount = voteRows.filter((v) => v.vote === "APPROVE").length;
   const rejectCount = voteRows.filter((v) => v.vote === "REJECT").length;
   const pendingCount = eligibleCount - approveCount - rejectCount;
+  const requiredToPass = requiredMajority(eligibleCount);
 
   return {
     eligibleCount,
     approveCount,
     rejectCount,
     pendingCount,
-    fullyApproved: eligibleCount > 0 && approveCount === eligibleCount,
+    requiredToPass,
+    thresholdReached: eligibleCount > 0 && approveCount >= requiredToPass,
+    // Once this many voters have rejected, the remaining voters cannot reach
+    // a majority even if all of them approve.
+    outcomeDecidedAgainst:
+      eligibleCount > 0 && approveCount + pendingCount < requiredToPass,
   };
 }
 
@@ -222,15 +271,13 @@ export async function executeIssuance(params: {
       .from(issuanceVotes)
       .where(eq(issuanceVotes.requestId, requestId));
 
-    const voteByUser = new Map(voteRows.map((v) => [v.userId, v.vote]));
     const eligibleCount = eligibleRows.length;
-    const fullyApproved =
-      eligibleCount > 0 &&
-      eligibleRows.every((row) => voteByUser.get(row.userId) === "APPROVE");
+    const approveCount = voteRows.filter((v) => v.vote === "APPROVE").length;
+    const required = requiredMajority(eligibleCount);
 
-    if (!fullyApproved) {
+    if (eligibleCount === 0 || approveCount < required) {
       throw new IssuanceError(
-        "Approval requirement has not been met. Every eligible user must approve.",
+        `Approval requirement has not been met. ${approveCount} of ${eligibleCount} eligible users approved; ${required} approvals are required.`,
       );
     }
 
@@ -241,6 +288,7 @@ export async function executeIssuance(params: {
       .for("update");
     if (!gov) throw new IssuanceError("Government account not found.");
 
+    // This is the ONLY place in the system where total supply increases.
     await tx
       .update(government)
       .set({
@@ -279,16 +327,32 @@ export async function executeIssuance(params: {
       actorLabel: governmentUsername,
       targetType: "ISSUANCE_REQUEST",
       targetId: requestId,
-      metadata: { amount: request.amount, txRef },
+      previousValue: `supply ${gov.totalSupply}`,
+      newValue: `supply ${gov.totalSupply + request.amount}`,
+      reason: request.reason,
+      metadata: {
+        amount: request.amount,
+        txRef,
+        approveCount,
+        eligibleCount,
+        requiredToPass: required,
+      },
     });
 
-    await notifyAllActiveUsers(
+    await notifyEligibleVoters(
       tx,
       "ISSUANCE_EXECUTED",
-      `The issuance request for ${request.amount} Aeros was approved and executed.`,
+      `The issuance request for ${request.amount.toLocaleString()} Aeros was approved and executed.`,
+      "/updates",
     );
 
-    return { txRef, amount: request.amount };
+    await publishUpdate(tx, {
+      title: `Aeros issuance executed: ${request.amount.toLocaleString()} Aeros`,
+      content: `A community-approved issuance of ${request.amount.toLocaleString()} Aeros has been executed. Reason: ${request.reason}`,
+      authorLabel: "Government",
+    });
+
+    return { txRef, amount: request.amount, approveCount, eligibleCount };
   });
 }
 

@@ -17,7 +17,6 @@ export const MIN_TAX_RATE_BP = 0;
 export const MAX_ISSUANCE_AMOUNT = 5_000;
 export const MIN_ISSUANCE_AMOUNT = 1;
 export const ISSUANCE_COOLDOWN_DAYS = 7;
-export const ISSUANCE_APPROVAL_THRESHOLD = 1; // 100% of eligible active users
 
 export const REGISTRATION_CODE_LENGTH = 4;
 
@@ -38,3 +37,77 @@ export const GOV_SESSION_COOKIE = "aeros_gov_session";
 
 export const USER_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7; // 7 days
 export const GOV_SESSION_MAX_AGE_SECONDS = 60 * 60 * 8; // 8 hours (tighter for admin)
+
+// ---------------------------------------------------------------------------
+// V2 — companies
+// ---------------------------------------------------------------------------
+
+/** Aeros the Government funds a company with on approval (from the treasury —
+ * this is a transfer, never newly created supply). */
+export const COMPANY_APPROVAL_FUNDING_AMOUNT = 5_000;
+
+/** Default tax rate applied to company transactions when the Government has
+ * not set a company-specific rate. Configurable from the Government panel. */
+export const DEFAULT_COMPANY_TAX_RATE_BP = 500; // 5.00%
+
+export const COMPANY_NAME_MIN_LENGTH = 2;
+export const COMPANY_NAME_MAX_LENGTH = 80;
+
+export const COMPANY_USERNAME_MIN_LENGTH = 3;
+export const COMPANY_USERNAME_MAX_LENGTH = 24;
+export const COMPANY_USERNAME_PATTERN = /^[a-z0-9_]+$/;
+
+export const COMPANY_CATEGORY_MAX_LENGTH = 60;
+export const COMPANY_REASON_MAX_LENGTH = 1_000;
+
+/** Hard cap on the company description, enforced server-side (spec §14). */
+export const COMPANY_DESCRIPTION_MAX_WORDS = 500;
+
+/** Cookie holding the active company context for a logged-in user. It is only
+ * ever a hint: the server re-verifies ownership and approval on every use, so
+ * forging this cookie grants nothing. */
+export const COMPANY_CONTEXT_COOKIE = "aeros_ctx";
+
+// ---------------------------------------------------------------------------
+// V2 — invoices
+// ---------------------------------------------------------------------------
+
+export const INVOICE_ITEM_MAX_LENGTH = 160;
+export const INVOICE_DESCRIPTION_MAX_LENGTH = 1_000;
+export const INVOICE_NOTE_MAX_LENGTH = 500;
+export const INVOICE_MAX_QUANTITY = 100_000;
+export const INVOICE_MAX_UNIT_PRICE = 1_000_000;
+
+// ---------------------------------------------------------------------------
+// V2 — support & IP
+// ---------------------------------------------------------------------------
+
+export const SUPPORT_MESSAGE_MAX_LENGTH = 2_000;
+export const IP_COMPLAINT_REASON_MAX_LENGTH = 160;
+export const IP_COMPLAINT_TEXT_MAX_LENGTH = 2_000;
+
+/** Strike count at which a company is automatically flagged for Government
+ * attention. Enforcement itself always stays a manual Government decision —
+ * there is deliberately no automatic "more sales wins" rule (spec §46). */
+export const IP_STRIKE_REVIEW_THRESHOLD = 2;
+
+// ---------------------------------------------------------------------------
+// V2 — data retention
+// ---------------------------------------------------------------------------
+
+/** Data classes the Government may set a retention period for. Financial
+ * ledger data is deliberately absent: transactions are never auto-deleted
+ * (spec §50). */
+export const RETENTION_CLASSES = [
+  "UPDATES",
+  "NOTIFICATIONS",
+  "SUPPORT_MESSAGES",
+] as const;
+export type RetentionClass = (typeof RETENTION_CLASSES)[number];
+
+export const MIN_RETENTION_DAYS = 1;
+export const MAX_RETENTION_DAYS = 3650;
+
+/** Phrase the Government must type to confirm a destructive maintenance
+ * action. */
+export const MAINTENANCE_CONFIRM_PHRASE = "CONFIRM CLEANUP";

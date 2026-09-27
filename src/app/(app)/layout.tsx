@@ -1,31 +1,55 @@
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/auth";
+import { getActingContext } from "@/lib/auth";
 import { UserBottomNav, UserNavbar } from "@/components/user-nav";
+import { getUnreadNotificationCount } from "@/lib/queries";
+import { effectiveUserStatus, formatSuspensionRemaining } from "@/lib/status";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
+  const ctx = await getActingContext();
+  if (!ctx) redirect("/login");
+
+  const { user } = ctx;
+  const status = effectiveUserStatus(user);
+
+  // A banned account keeps its data but cannot use the app at all (spec §9).
+  if (status === "BANNED") redirect("/banned");
+
+  const unreadCount = await getUnreadNotificationCount(user.id);
+  const hasCompany = ctx.availableCompanies.length > 0;
 
   return (
     <div className="flex min-h-screen flex-col">
-      <UserNavbar />
-      {user.status !== "ACTIVE" && (
-        <div
-          className={`px-4 py-2 text-center text-sm font-medium ${
-            user.status === "SUSPENDED"
-              ? "bg-[#fff6e0] text-[#8a5a00]"
-              : "bg-[#fdecea] text-[#b3261e]"
-          }`}
-        >
-          {user.status === "SUSPENDED"
-            ? "Your account is suspended. You cannot send Aeros until it is restored."
-            : "Your account is banned. You cannot send or receive Aeros."}
+      <UserNavbar hasCompany={hasCompany} unreadCount={unreadCount} />
+
+      {status === "SUSPENDED" && (
+        <div className="bg-[#fff6e0] px-4 py-2 text-center text-sm font-medium text-[#8a5a00]">
+          Your account is suspended
+          {user.suspendedUntil
+            ? ` for another ${formatSuspensionRemaining(user.suspendedUntil)} (until ${user.suspendedUntil.toLocaleString()})`
+            : ""}
+          . You can still receive Aeros and view your account, but not send.
+          {user.suspensionReason ? ` Reason: ${user.suspensionReason}` : ""}
         </div>
       )}
+
+      {user.mustChangePassword && (
+        <div className="bg-[#fff6e0] px-4 py-2 text-center text-sm font-medium text-[#8a5a00]">
+          You are using a temporary password. Please set a new one from your profile.
+        </div>
+      )}
+
+      {ctx.company && (
+        <div className="border-b border-border bg-surface px-4 py-2 text-center text-sm">
+          Acting as <span className="font-medium">{ctx.company.name}</span> (@
+          {ctx.company.username}) — company wallet
+        </div>
+      )}
+
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 pb-20 pt-6 sm:px-6 sm:pb-10">
         {children}
       </main>
-      <UserBottomNav />
+
+      <UserBottomNav hasCompany={hasCompany} unreadCount={unreadCount} />
     </div>
   );
 }
