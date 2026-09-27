@@ -48,21 +48,17 @@ import {
   archiveAuditLogs,
   clearAllUpdates,
   runCleanup,
-  runTextScrub,
   unarchiveAllAuditLogs,
   updateRetentionSettings,
-  updateTextScrubSettings,
 } from "@/lib/retention";
 import { hashSecret } from "@/lib/password";
 import { healExpiredSuspensions } from "@/lib/status";
-import { formatDateTime } from "@/lib/datetime";
 import {
   adjustBalanceSchema,
   adjustCompanyBalanceSchema,
   archiveAuditSchema,
   banUserSchema,
   companyStatusSchema,
-  economyPolicySchema,
   editCompanySchema,
   fundUserSchema,
   governmentPaymentSchema,
@@ -79,7 +75,6 @@ import {
   setCompanyTaxSchema,
   setTaxRateSchema,
   suspendUserSchema,
-  textScrubSettingsSchema,
   timedSuspendSchema,
 } from "@/lib/validators";
 import { MAINTENANCE_CONFIRM_PHRASE } from "@/lib/constants";
@@ -318,7 +313,7 @@ export async function suspendUserUntilAction(
       reason: parsed.data.reason,
       suspendedUntil: until,
       action: "ACCOUNT_SUSPENDED",
-      notifyMessage: `Your account is suspended until ${formatDateTime(until)}. Reason: ${parsed.data.reason}`,
+      notifyMessage: `Your account is suspended until ${until.toLocaleString()}. Reason: ${parsed.data.reason}`,
       actorLabel: g.username,
       actorId: g.id,
     });
@@ -980,77 +975,6 @@ export async function setCompanyTaxAction(
   revalidatePath("/gov/tax");
   revalidatePath("/gov/companies");
   revalidatePath(`/gov/companies/${company.id}`);
-  return { ok: true, data: undefined };
-}
-
-/**
- * V2.1 — the economy policy row: company approval funding amount, the
- * per-execution issuance cap, and the issuance cooldown (now measured in IST
- * calendar days — see src/lib/issuance.ts). These used to be hardcoded
- * constants; they follow the exact same validation/audit/revalidate pattern
- * as setTaxRateAction and setSalePolicyAction above.
- */
-export async function setEconomyPolicyAction(
-  _prev: ActionResult | null,
-  formData: FormData,
-): Promise<ActionResult> {
-  let g;
-  try {
-    g = await gov();
-  } catch {
-    return { ok: false, error: "Government authorization required." };
-  }
-
-  const parsed = economyPolicySchema.safeParse({
-    companyApprovalFundingAmount: formData.get("companyApprovalFundingAmount"),
-    maxIssuanceAmount: formData.get("maxIssuanceAmount"),
-    issuanceCooldownDays: formData.get("issuanceCooldownDays"),
-  });
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
-  }
-
-  await db.transaction(async (tx) => {
-    const [govRow] = await tx
-      .select()
-      .from(government)
-      .where(eq(government.id, g.id))
-      .for("update");
-    if (!govRow) throw new Error("Government account not found.");
-
-    const now = new Date();
-
-    await tx
-      .update(government)
-      .set({
-        companyApprovalFundingAmount: parsed.data.companyApprovalFundingAmount,
-        companyApprovalFundingUpdatedAt: now,
-        maxIssuanceAmount: parsed.data.maxIssuanceAmount,
-        maxIssuanceAmountUpdatedAt: now,
-        issuanceCooldownDays: parsed.data.issuanceCooldownDays,
-        issuanceCooldownUpdatedAt: now,
-      })
-      .where(eq(government.id, govRow.id));
-
-    await recordAudit(tx, {
-      action: "ECONOMY_POLICY_CHANGED",
-      actorType: "GOVERNMENT",
-      actorId: g.id,
-      actorLabel: g.username,
-      previousValue: JSON.stringify({
-        companyApprovalFundingAmount: govRow.companyApprovalFundingAmount,
-        maxIssuanceAmount: govRow.maxIssuanceAmount,
-        issuanceCooldownDays: govRow.issuanceCooldownDays,
-      }),
-      newValue: JSON.stringify(parsed.data),
-      metadata: parsed.data,
-    });
-  });
-
-  revalidatePath("/gov/tax");
-  revalidatePath("/gov/issuance");
-  revalidatePath("/gov/companies");
-  revalidatePath("/gov");
   return { ok: true, data: undefined };
 }
 
@@ -1810,94 +1734,6 @@ export async function setRetentionAction(
 
   revalidatePath("/gov/retention");
   return { ok: true, data: undefined };
-}
-
-/** V2.1 — text-scrub ages, one per data class. Same pattern as setRetentionAction. */
-export async function setTextScrubSettingsAction(
-  _prev: ActionResult | null,
-  formData: FormData,
-): Promise<ActionResult> {
-  let g;
-  try {
-    g = await gov();
-  } catch {
-    return { ok: false, error: "Government authorization required." };
-  }
-
-  const parsed = textScrubSettingsSchema.safeParse({
-    transactionReasonMaxAgeDays: formData.get("transactionReasonMaxAgeDays") ?? "",
-    invoiceTextMaxAgeDays: formData.get("invoiceTextMaxAgeDays") ?? "",
-    loanTextMaxAgeDays: formData.get("loanTextMaxAgeDays") ?? "",
-    issuanceNoteMaxAgeDays: formData.get("issuanceNoteMaxAgeDays") ?? "",
-  });
-  if (!parsed.success) return { ok: false, error: "Invalid request." };
-
-  const toDays = (raw: string): number | null => {
-    const trimmed = raw.trim();
-    if (trimmed === "") return null;
-    const value = Number(trimmed);
-    if (!Number.isInteger(value) || value < 1 || value > 3650) {
-      throw new Error("Scrub ages must be whole numbers of days between 1 and 3650.");
-    }
-    return value;
-  };
-
-  try {
-    await updateTextScrubSettings({
-      transactionReasonMaxAgeDays: toDays(parsed.data.transactionReasonMaxAgeDays),
-      invoiceTextMaxAgeDays: toDays(parsed.data.invoiceTextMaxAgeDays),
-      loanTextMaxAgeDays: toDays(parsed.data.loanTextMaxAgeDays),
-      issuanceNoteMaxAgeDays: toDays(parsed.data.issuanceNoteMaxAgeDays),
-      governmentId: g.id,
-      governmentUsername: g.username,
-    });
-  } catch (e) {
-    return { ok: false, error: errMsg(e, "Could not save the text-scrub settings.") };
-  }
-
-  revalidatePath("/gov/retention");
-  return { ok: true, data: undefined };
-}
-
-/**
- * Clears free-text fields (never amounts, ids, parties, balances or
- * timestamps) on transactions/invoices/loans/issuance records older than
- * the configured ages. Idempotent — safe to run repeatedly, and rows already
- * cleared are simply skipped. Gated behind the same confirm phrase as the
- * other destructive-looking maintenance actions, even though nothing
- * financial is ever touched.
- */
-export async function runTextScrubAction(
-  _prev: ActionResult<{ summary: string }> | null,
-  formData: FormData,
-): Promise<ActionResult<{ summary: string }>> {
-  let g;
-  try {
-    g = await gov();
-  } catch {
-    return { ok: false, error: "Government authorization required." };
-  }
-
-  const confirm = String(formData.get("confirm") ?? "").trim();
-  if (confirm !== MAINTENANCE_CONFIRM_PHRASE) {
-    return {
-      ok: false,
-      error: `Type "${MAINTENANCE_CONFIRM_PHRASE}" exactly to confirm this cleanup.`,
-    };
-  }
-
-  const result = await runTextScrub({
-    governmentId: g.id,
-    governmentUsername: g.username,
-  });
-
-  revalidatePath("/gov/retention");
-  return {
-    ok: true,
-    data: {
-      summary: `${result.transactionsScrubbed} transactions, ${result.invoicesScrubbed} invoices, ${result.loansScrubbed} loans and ${result.issuanceNotesScrubbed} issuance notes scrubbed.`,
-    },
-  };
 }
 
 export async function runCleanupAction(

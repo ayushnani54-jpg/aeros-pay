@@ -6,7 +6,6 @@ import { CreateInvoiceForm, CancelInvoiceButton } from "@/components/forms/invoi
 import { InvoiceStatusBadge } from "@/components/status-badge";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { effectiveCompanyStatus } from "@/lib/status";
-import { formatDate } from "@/lib/datetime";
 
 export default async function CompanyInvoicesPage({
   searchParams,
@@ -94,7 +93,7 @@ export default async function CompanyInvoicesPage({
                   <p className="mt-1 text-xs text-muted">
                     {invoice.quantity} × {invoice.unitPrice.toLocaleString()} ={" "}
                     {invoice.subtotal.toLocaleString()} + {invoice.taxAmount.toLocaleString()}{" "}
-                    tax · {formatDate(invoice.createdAt)}
+                    tax · {new Date(invoice.createdAt).toLocaleDateString()}
                   </p>
                   {invoice.paidTxRef && (
                     <p className="mt-1 font-mono text-xs text-muted">Ref {invoice.paidTxRef}</p>

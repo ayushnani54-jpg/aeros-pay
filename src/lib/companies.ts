@@ -2,7 +2,10 @@ import "server-only";
 import { db } from "@/db/client";
 import { companies, government, users } from "@/db/schema";
 import { and, eq, ne } from "drizzle-orm";
-import { COMPANY_DESCRIPTION_MAX_WORDS } from "./constants";
+import {
+  COMPANY_APPROVAL_FUNDING_AMOUNT,
+  COMPANY_DESCRIPTION_MAX_WORDS,
+} from "./constants";
 import { isUniqueViolation } from "./db-errors";
 import { recordAudit } from "./audit";
 import { notifyUser, publishUpdate } from "./notify";
@@ -136,8 +139,9 @@ export async function approveCompany(params: {
   fundingAmount?: number;
 }): Promise<{ company: Company; txRef: string; amount: number }> {
   const { companyId, governmentId, governmentUsername } = params;
+  const amount = params.fundingAmount ?? COMPANY_APPROVAL_FUNDING_AMOUNT;
 
-  const { company: approved, amount } = await db.transaction(async (tx) => {
+  const approved = await db.transaction(async (tx) => {
     const [company] = await tx
       .select()
       .from(companies)
@@ -157,12 +161,6 @@ export async function approveCompany(params: {
       .where(eq(government.id, governmentId))
       .for("update");
     if (!govRow) throw new CompanyError("Government account not found.");
-
-    // The one-off override keeps working exactly as before; otherwise the
-    // live, Government-configurable default is read from the government row
-    // itself (V2.1 — this used to be a hardcoded constant).
-    const amount = params.fundingAmount ?? govRow.companyApprovalFundingAmount;
-
     if (govRow.balance < amount) {
       throw new CompanyError(
         `Government treasury has insufficient Aeros to fund this company (${amount.toLocaleString()} required, ${govRow.balance.toLocaleString()} available).`,
@@ -192,7 +190,7 @@ export async function approveCompany(params: {
       metadata: { name: company.name, username: company.username },
     });
 
-    return { company: updated, amount };
+    return updated;
   });
 
   // Funding is its own atomic transfer. The balance check above makes a

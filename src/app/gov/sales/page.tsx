@@ -3,7 +3,6 @@ import { getAllOpenListings, getAllSaleRecords } from "@/lib/sales";
 import { getGovernmentSingleton } from "@/lib/queries";
 import { SalePolicyForm } from "@/components/forms/gov-forms";
 import { CURRENCY_NAME } from "@/lib/constants";
-import { formatDate } from "@/lib/datetime";
 
 export default async function GovSalesPage() {
   const [listings, records, gov] = await Promise.all([
@@ -57,7 +56,7 @@ export default async function GovSalesPage() {
                   </p>
                   <p className="mt-1 text-xs text-muted">&ldquo;{listing.reason}&rdquo;</p>
                   <p className="mt-1 text-xs text-muted">
-                    Listed {formatDate(listing.createdAt)}
+                    Listed {new Date(listing.createdAt).toLocaleDateString()}
                   </p>
                 </div>
                 <div className="text-right">
@@ -104,7 +103,7 @@ export default async function GovSalesPage() {
                       {record.price.toLocaleString()} {CURRENCY_NAME}
                     </p>
                     <p className="text-xs text-muted">
-                      {formatDate(record.createdAt)}
+                      {new Date(record.createdAt).toLocaleDateString()}
                     </p>
                   </div>
                 </div>

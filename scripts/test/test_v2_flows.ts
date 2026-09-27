@@ -184,12 +184,6 @@ async function resetFixtures() {
     loanMinCompanyAgeDays: 7,
     loanMinCompanySales: 0,
     loanDefaultGraceDays: 7,
-    // V2.1: these three used to be hardcoded constants; reset them too so a
-    // run that changes one (economy-policy form test) cannot leak into the
-    // next run, same as every other configurable policy field above.
-    companyApprovalFundingAmount: 3000,
-    maxIssuanceAmount: 10000,
-    issuanceCooldownDays: 1,
   });
   await db.execute(
     sql`UPDATE government SET total_supply = 50000 + (SELECT coalesce(sum(balance),0) FROM users)`,
@@ -272,17 +266,10 @@ async function main() {
   });
   const afterApproval = await totals();
 
-  // V2.1: the funding amount is the live, Government-configurable
-  // government.company_approval_funding_amount (default 3,000, reset by
-  // resetFixtures above) — no longer a hardcoded 5,000.
-  check(
-    "company: approval funds exactly the configured amount (3,000 Aeros)",
-    approval.amount === 3000,
-    approval.amount,
-  );
+  check("company: approval funds exactly 5,000 Aeros", approval.amount === 5000, approval.amount);
   check(
     "company: treasury paid the funding (supply unchanged)",
-    afterApproval.treasury === beforeApproval.treasury - 3000 &&
+    afterApproval.treasury === beforeApproval.treasury - 5000 &&
       afterApproval.supply === beforeApproval.supply,
     { beforeApproval, afterApproval },
   );
@@ -292,7 +279,7 @@ async function main() {
   );
 
   const [fundedCo] = await db.select().from(companies).where(eq(companies.id, company.id)).limit(1);
-  check("company: wallet holds the 3,000", fundedCo.balance === 3000, fundedCo.balance);
+  check("company: wallet holds the 5,000", fundedCo.balance === 5000, fundedCo.balance);
   check("company: status is APPROVED", fundedCo.status === "APPROVED", fundedCo.status);
 
   await expectError(
@@ -968,25 +955,18 @@ async function main() {
     "already been executed",
   );
 
-  // V2.1: daily IST calendar-day limit (replaces the old rolling 7-day
-  // cooldown) — at most one issuance execution per India Standard Time
-  // calendar day. `request` above was just executed a moment ago, so this
-  // one — created, voted and attempted in the same IST calendar day — must
-  // be blocked. (The "next IST calendar day is allowed again" half of this
-  // rule is covered separately in scripts/test/test_issuance.ts, which
-  // backdates a prior execution's `executedAt` to exercise it without
-  // waiting for a real day to roll over.)
+  // Cooldown.
   const request3 = await createIssuanceRequest({
     governmentId: gov.id,
     governmentUsername: gov.username,
     amount: 100,
-    reason: "Daily IST limit test",
+    reason: "Cooldown test",
   });
   for (let i = 0; i < majorityNeeded; i++) {
     await castIssuanceVote({ requestId: request3.id, userId: voters[i].id, vote: "APPROVE" });
   }
   await expectError(
-    "issuance: the daily IST calendar-day limit blocks a second execution the same day",
+    "issuance: the 7-day cooldown blocks a second execution",
     () =>
       executeIssuance({
         requestId: request3.id,

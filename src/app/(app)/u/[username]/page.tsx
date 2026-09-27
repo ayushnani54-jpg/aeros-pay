@@ -5,7 +5,6 @@ import { getUserByUsername } from "@/lib/queries";
 import { getCompaniesForOwner } from "@/lib/companies";
 import { StatusBadge } from "@/components/status-badge";
 import { effectiveUserStatus } from "@/lib/status";
-import { formatDate } from "@/lib/datetime";
 
 /**
  * Public user profile.
@@ -43,7 +42,7 @@ export default async function PublicUserProfile({ params }: PageProps<"/u/[usern
         </div>
 
         <p className="mt-4 text-sm text-muted">
-          Member since {formatDate(person.createdAt)}
+          Member since {new Date(person.createdAt).toLocaleDateString()}
         </p>
 
         {!isSelf && status !== "BANNED" && (

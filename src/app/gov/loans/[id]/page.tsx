@@ -10,7 +10,6 @@ import { getCompanyAdminProfile } from "@/lib/queries";
 import { LoanActionForm, LoanReviewActions } from "@/components/forms/gov-forms";
 import { InstalmentStatusBadge, LoanStatusBadge } from "@/components/status-badge";
 import { CURRENCY_NAME } from "@/lib/constants";
-import { formatDate, formatDateTime } from "@/lib/datetime";
 
 export default async function GovLoanDetail({ params }: PageProps<"/gov/loans/[id]">) {
   const { id } = await params;
@@ -79,17 +78,17 @@ export default async function GovLoanDetail({ params }: PageProps<"/gov/loans/[i
               />
             </>
           )}
-          <Row label="Applied" value={formatDateTime(loan.createdAt)} />
+          <Row label="Applied" value={new Date(loan.createdAt).toLocaleString()} />
           {loan.reviewedAt && (
             <Row
               label="Reviewed"
-              value={`${formatDateTime(loan.reviewedAt)} by ${loan.reviewedBy}`}
+              value={`${new Date(loan.reviewedAt).toLocaleString()} by ${loan.reviewedBy}`}
             />
           )}
           {loan.disbursedAt && (
             <Row
               label="Disbursed"
-              value={`${formatDateTime(loan.disbursedAt)} · Ref ${loan.disbursementTxRef}`}
+              value={`${new Date(loan.disbursedAt).toLocaleString()} · Ref ${loan.disbursementTxRef}`}
             />
           )}
           {loan.rejectionReason && <Row label="Rejection reason" value={loan.rejectionReason} />}
@@ -140,7 +139,7 @@ export default async function GovLoanDetail({ params }: PageProps<"/gov/loans/[i
                   <p className="text-xs text-muted">
                     {instalment.principalPortion.toLocaleString()} principal +{" "}
                     {instalment.interestPortion.toLocaleString()} interest · due{" "}
-                    {formatDate(instalment.dueAt)}
+                    {new Date(instalment.dueAt).toLocaleDateString()}
                   </p>
                   {instalment.paidTxRef && (
                     <p className="mt-1 font-mono text-xs text-muted">
@@ -184,7 +183,7 @@ export default async function GovLoanDetail({ params }: PageProps<"/gov/loans/[i
                   {payment.principalPaid.toLocaleString()} principal +{" "}
                   {payment.interestPaid.toLocaleString()} interest · remaining{" "}
                   {payment.remainingBalance.toLocaleString()} ·{" "}
-                  {formatDateTime(payment.createdAt)}
+                  {new Date(payment.createdAt).toLocaleString()}
                 </p>
               </div>
             ))}
@@ -207,7 +206,7 @@ export default async function GovLoanDetail({ params }: PageProps<"/gov/loans/[i
               <div key={action.id} className="py-3 text-sm">
                 <p className="font-medium">{action.action}</p>
                 <p className="text-xs text-muted">
-                  {action.actorLabel} · {formatDateTime(action.createdAt)}
+                  {action.actorLabel} · {new Date(action.createdAt).toLocaleString()}
                 </p>
                 <p className="mt-1 text-sm text-muted">{action.reason}</p>
               </div>

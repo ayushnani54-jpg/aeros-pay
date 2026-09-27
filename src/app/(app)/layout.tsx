@@ -3,7 +3,6 @@ import { getActingContext } from "@/lib/auth";
 import { UserBottomNav, UserNavbar } from "@/components/user-nav";
 import { getUnreadNotificationCount } from "@/lib/queries";
 import { effectiveUserStatus, formatSuspensionRemaining } from "@/lib/status";
-import { formatDateTime } from "@/lib/datetime";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const ctx = await getActingContext();
@@ -26,7 +25,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         <div className="bg-[#fff6e0] px-4 py-2 text-center text-sm font-medium text-[#8a5a00]">
           Your account is suspended
           {user.suspendedUntil
-            ? ` for another ${formatSuspensionRemaining(user.suspendedUntil)} (until ${formatDateTime(user.suspendedUntil)})`
+            ? ` for another ${formatSuspensionRemaining(user.suspendedUntil)} (until ${user.suspendedUntil.toLocaleString()})`
             : ""}
           . You can still receive Aeros and view your account, but not send.
           {user.suspensionReason ? ` Reason: ${user.suspensionReason}` : ""}

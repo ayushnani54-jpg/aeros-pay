@@ -14,7 +14,6 @@ import {
 } from "@/components/forms/company-forms";
 import { SaleStatusBadge } from "@/components/status-badge";
 import { CURRENCY_NAME } from "@/lib/constants";
-import { formatDate, formatDateTime } from "@/lib/datetime";
 
 export default async function CompanySalePage() {
   const ctx = await getActingContext();
@@ -73,7 +72,7 @@ export default async function CompanySalePage() {
                 <p className="mt-3 rounded-md bg-surface p-3 text-sm">{offer.message}</p>
               )}
               <p className="mt-2 text-xs text-muted">
-                Received {formatDateTime(offer.createdAt)}
+                Received {new Date(offer.createdAt).toLocaleString()}
               </p>
             </div>
           ))}
@@ -87,7 +86,7 @@ export default async function CompanySalePage() {
               <h2 className="font-medium">Currently listed for sale</h2>
               <p className="mt-1 text-sm text-muted">&ldquo;{listing.reason}&rdquo;</p>
               <p className="mt-2 text-xs text-muted">
-                Listed {formatDateTime(listing.createdAt)}
+                Listed {new Date(listing.createdAt).toLocaleString()}
               </p>
             </div>
             <div className="text-right">
@@ -138,7 +137,7 @@ export default async function CompanySalePage() {
                   </p>
                   <p className="text-xs text-muted">
                     {offer.offerorType === "GOVERNMENT" ? "Government" : "User"} ·{" "}
-                    {formatDate(offer.createdAt)}
+                    {new Date(offer.createdAt).toLocaleDateString()}
                   </p>
                 </div>
                 <SaleStatusBadge status={offer.status} />
@@ -159,7 +158,7 @@ export default async function CompanySalePage() {
                 </p>
                 <p className="text-xs text-muted">
                   {record.saleType.replace(/_/g, " ").toLowerCase()} ·{" "}
-                  {formatDateTime(record.createdAt)} · Ref {record.txRef}
+                  {new Date(record.createdAt).toLocaleString()} · Ref {record.txRef}
                 </p>
               </div>
             ))}

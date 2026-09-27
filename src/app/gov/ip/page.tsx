@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { getAllComplaints } from "@/lib/ip";
 import { IpStatusBadge } from "@/components/status-badge";
-import { formatDate } from "@/lib/datetime";
 
 export default async function GovIpPage() {
   const complaints = await getAllComplaints();
@@ -39,7 +38,7 @@ export default async function GovIpPage() {
                   </p>
                   <p className="mt-1 text-xs text-muted">
                     {row.complaint.complaintNumber} ·{" "}
-                    {formatDate(row.complaint.createdAt)}
+                    {new Date(row.complaint.createdAt).toLocaleDateString()}
                     {row.accusedStrikes > 0
                       ? ` · accused has ${row.accusedStrikes} strike(s)`
                       : ""}
@@ -75,7 +74,7 @@ export default async function GovIpPage() {
                   </p>
                   <p className="text-xs text-muted">
                     {row.complaint.decidedAt
-                      ? formatDate(row.complaint.decidedAt)
+                      ? new Date(row.complaint.decidedAt).toLocaleDateString()
                       : ""}
                   </p>
                 </div>

@@ -3,7 +3,6 @@ import { getAllLoans, getLoanCounts, getLoanPolicy, runLoanMaintenance } from "@
 import { LoanPolicyForm } from "@/components/forms/gov-forms";
 import { LoanStatusBadge } from "@/components/status-badge";
 import { CURRENCY_NAME } from "@/lib/constants";
-import { formatDate } from "@/lib/datetime";
 
 const TABS = [
   "ALL",
@@ -101,7 +100,7 @@ export default async function GovLoansPage({ searchParams }: PageProps<"/gov/loa
                     {loan.nextDueAt && remaining > 0 && (
                       <p className={`mt-1 text-xs ${overdue ? "text-danger" : "text-muted"}`}>
                         {overdue ? "Overdue since " : "Next due "}
-                        {formatDate(loan.nextDueAt)}
+                        {new Date(loan.nextDueAt).toLocaleDateString()}
                       </p>
                     )}
                   </div>

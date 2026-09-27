@@ -13,7 +13,6 @@ import { StatusBadge } from "@/components/status-badge";
 import { WalletSwitcher } from "@/components/wallet-switcher";
 import { effectiveUserStatus } from "@/lib/status";
 import { runLoanMaintenance } from "@/lib/loans";
-import { formatDate } from "@/lib/datetime";
 
 export default async function DashboardPage() {
   const ctx = await getActingContext();
@@ -151,7 +150,7 @@ export default async function DashboardPage() {
             <StatusBadge status={effectiveUserStatus(user)} />
           </dd>
           <dt className="text-muted">Registered</dt>
-          <dd>{formatDate(user.createdAt)}</dd>
+          <dd>{new Date(user.createdAt).toLocaleDateString()}</dd>
         </dl>
       </section>
     </div>

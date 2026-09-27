@@ -7,13 +7,7 @@ import {
   IssuanceError,
 } from "../../src/lib/issuance";
 import { db, pool } from "../../src/db/client";
-import {
-  users,
-  government,
-  issuanceRequests,
-  issuanceEligibleVoters,
-  issuanceVotes,
-} from "../../src/db/schema";
+import { users, government, issuanceRequests } from "../../src/db/schema";
 import { eq } from "drizzle-orm";
 
 async function expectError(label: string, fn: () => Promise<unknown>, expectedSubstring: string) {
@@ -30,26 +24,7 @@ async function expectError(label: string, fn: () => Promise<unknown>, expectedSu
   }
 }
 
-/**
- * This script's assertions (the daily IST issuance limit, in particular)
- * depend on there being no leftover EXECUTED issuance request from an
- * earlier run still sitting in the table — otherwise re-running the script
- * on the same IST day would spuriously trip the "already executed today"
- * check at step 7 rather than exercising it deliberately at steps 9/11.
- * Issuance-request rows carry no balance of their own (the balance/supply
- * change they caused when executed is not reversed here, same as every
- * other fixture reset in this test suite), so clearing them is safe and
- * makes the script idempotent across repeated runs.
- */
-async function resetIssuanceFixtures() {
-  await db.delete(issuanceVotes);
-  await db.delete(issuanceEligibleVoters);
-  await db.delete(issuanceRequests);
-}
-
 async function main() {
-  await resetIssuanceFixtures();
-
   const [gov] = await db.select().from(government).limit(1);
   const allUsers = await db.select().from(users);
   console.log(
@@ -57,18 +32,17 @@ async function main() {
     allUsers.filter((u) => u.status === "ACTIVE").map((u) => u.username),
   );
 
-  // 1. Amount cap (V2.1: the live, Government-configurable
-  // government.max_issuance_amount, default 10,000 — not a hardcoded 5,000).
+  // 1. Amount cap
   await expectError(
     "amount exceeds cap",
     () =>
       createIssuanceRequest({
         governmentId: gov.id,
         governmentUsername: gov.username,
-        amount: 10_001,
+        amount: 5001,
         reason: "too much",
       }),
-    `cannot exceed ${gov.maxIssuanceAmount.toLocaleString()}`,
+    "cannot exceed 5000",
   );
 
   // 2. Create a valid request
@@ -142,22 +116,18 @@ async function main() {
     "already been executed",
   );
 
-  // 9. IST calendar-day limit (V2.1: replaces the old rolling 7-day cooldown
-  // — Government may execute at most one issuance per IST calendar day).
-  // Creating and fully approving a second request the same IST day, then
-  // trying to execute it, must be blocked since request 1 was just executed
-  // today (IST).
+  // 9. 7-day cooldown: creating and fully approving a second request, then trying to execute
   const request2 = await createIssuanceRequest({
     governmentId: gov.id,
     governmentUsername: gov.username,
     amount: 500,
-    reason: "second request same IST day",
+    reason: "second request within cooldown",
   });
   for (const u of eligibleActiveUsers) {
     await castIssuanceVote({ requestId: request2.id, userId: u.id, vote: "APPROVE" });
   }
   await expectError(
-    "same-IST-day execution blocked",
+    "7-day cooldown enforcement",
     () =>
       executeIssuance({
         requestId: request2.id,
@@ -184,37 +154,6 @@ async function main() {
     console.log("PASS [rejection recorded, majority still decides]:", progress3);
   } else {
     console.log("FAIL [rejection recorded]:", progress3);
-  }
-
-  // 11. Next-IST-day: once the last execution's `executedAt` falls on a
-  // previous IST calendar day, a new (already fully-approved) request may be
-  // executed. We can't wait a real day in a test run, so we backdate the
-  // already-executed request's timestamp directly — this exercises exactly
-  // the same `hasRecentExecution` / istCalendarDaysBetween comparison that
-  // production code uses at the next real IST midnight.
-  const twoIstDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
-  await db
-    .update(issuanceRequests)
-    .set({ executedAt: twoIstDaysAgo })
-    .where(eq(issuanceRequests.id, request.id));
-
-  const govBeforeNextDay = (await db.select().from(government).where(eq(government.id, gov.id)))[0];
-  const execResult2 = await executeIssuance({
-    requestId: request2.id,
-    governmentId: gov.id,
-    governmentUsername: gov.username,
-  });
-  const govAfterNextDay = (await db.select().from(government).where(eq(government.id, gov.id)))[0];
-  if (
-    execResult2.amount === 500 &&
-    govAfterNextDay.balance === govBeforeNextDay.balance + 500 &&
-    govAfterNextDay.totalSupply === govBeforeNextDay.totalSupply + 500
-  ) {
-    console.log("PASS [next-IST-day execution allowed after backdating last execution]:", execResult2);
-  } else {
-    console.log(
-      `FAIL [next-IST-day execution]: result(${JSON.stringify(execResult2)}) before(${govBeforeNextDay.balance},${govBeforeNextDay.totalSupply}) after(${govAfterNextDay.balance},${govAfterNextDay.totalSupply})`,
-    );
   }
 
   await pool.end();

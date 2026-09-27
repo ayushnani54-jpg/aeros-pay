@@ -176,19 +176,6 @@
           "notNull": true,
           "default": 0
         },
-        "government_owned": {
-          "name": "government_owned",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "government_acquired_at": {
-          "name": "government_acquired_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
         "tax_rate_bp": {
           "name": "tax_rate_bp",
           "type": "integer",

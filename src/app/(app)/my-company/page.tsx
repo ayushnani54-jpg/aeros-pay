@@ -10,7 +10,6 @@ import { TransactionRow } from "@/components/transaction-row";
 import { WalletSwitcher } from "@/components/wallet-switcher";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { effectiveCompanyStatus, formatSuspensionRemaining } from "@/lib/status";
-import { formatDate } from "@/lib/datetime";
 
 export default async function MyCompanyPage() {
   const ctx = await getActingContext();
@@ -172,7 +171,7 @@ export default async function MyCompanyPage() {
               </p>
               {activeLoan.nextDueAt && (
                 <p className="mt-1 text-xs text-muted">
-                  Next due {formatDate(activeLoan.nextDueAt)}
+                  Next due {new Date(activeLoan.nextDueAt).toLocaleDateString()}
                 </p>
               )}
             </div>

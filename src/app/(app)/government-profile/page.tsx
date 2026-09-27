@@ -2,7 +2,6 @@ import Link from "next/link";
 import { getGovernmentSingleton, getAllUpdates } from "@/lib/queries";
 import { formatTaxRateBp } from "@/lib/tax";
 import { AerosLogo } from "@/components/logo";
-import { formatDate } from "@/lib/datetime";
 
 /**
  * The Government's public profile (spec §31).
@@ -79,7 +78,7 @@ export default async function GovernmentProfilePage() {
               <div className="flex items-start justify-between gap-3">
                 <h3 className="font-medium">{update.title}</h3>
                 <span className="shrink-0 text-xs text-muted">
-                  {formatDate(update.createdAt)}
+                  {new Date(update.createdAt).toLocaleDateString()}
                 </span>
               </div>
               <p className="mt-2 whitespace-pre-line text-sm text-muted">{update.content}</p>

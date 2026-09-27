@@ -2,17 +2,13 @@ import {
   getRetentionSettings,
   getStorageCounts,
   previewCleanup,
-  previewTextScrub,
 } from "@/lib/retention";
 import {
   ArchiveAuditForm,
   ClearUpdatesForm,
   RetentionSettingsForm,
   RunCleanupForm,
-  RunTextScrubForm,
-  TextScrubSettingsForm,
 } from "@/components/forms/gov-forms";
-import { formatDateTime } from "@/lib/datetime";
 
 /**
  * Data retention & cleanup (spec §49–52).
@@ -22,11 +18,10 @@ import { formatDateTime } from "@/lib/datetime";
  * corrupt balances, supply and tax totals.
  */
 export default async function GovRetentionPage() {
-  const [settings, preview, counts, textScrubPreview] = await Promise.all([
+  const [settings, preview, counts] = await Promise.all([
     getRetentionSettings(),
     previewCleanup(),
     getStorageCounts(),
-    previewTextScrub(),
   ]);
 
   return (
@@ -107,66 +102,11 @@ export default async function GovRetentionPage() {
 
         <p className="mb-3 text-sm text-muted">
           Last cleanup:{" "}
-          {preview.lastCleanupAt ? formatDateTime(preview.lastCleanupAt) : "never"}.{" "}
+          {preview.lastCleanupAt ? new Date(preview.lastCleanupAt).toLocaleString() : "never"}.{" "}
           {preview.nextCleanupHint}
         </p>
 
         <RunCleanupForm />
-      </section>
-
-      <section className="card border-[#111111] p-5">
-        <h2 className="font-medium">Text-field scrubbing</h2>
-        <p className="mt-1 mb-3 text-sm text-muted">
-          A separate, narrower capability: this never deletes a row and never touches an amount,
-          balance, id, party or timestamp. It only clears specific free-text notes/reasons on
-          transactions, invoices, loans and issuance records once they are older than the
-          configured age.
-        </p>
-        <dl className="mb-4 space-y-1 text-sm">
-          <PreviewRow
-            label="Transaction reasons eligible"
-            eligible={textScrubPreview.transactions.eligible}
-            total={textScrubPreview.transactions.eligible}
-            days={textScrubPreview.transactions.maxAgeDays}
-            hideTotal
-          />
-          <PreviewRow
-            label="Invoice text eligible"
-            eligible={textScrubPreview.invoices.eligible}
-            total={textScrubPreview.invoices.eligible}
-            days={textScrubPreview.invoices.maxAgeDays}
-            hideTotal
-          />
-          <PreviewRow
-            label="Loan text eligible"
-            eligible={textScrubPreview.loans.eligible}
-            total={textScrubPreview.loans.eligible}
-            days={textScrubPreview.loans.maxAgeDays}
-            hideTotal
-          />
-          <PreviewRow
-            label="Issuance notes eligible"
-            eligible={textScrubPreview.issuanceNotes.eligible}
-            total={textScrubPreview.issuanceNotes.eligible}
-            days={textScrubPreview.issuanceNotes.maxAgeDays}
-            hideTotal
-          />
-        </dl>
-        <p className="mb-3 text-sm text-muted">
-          Last scrub:{" "}
-          {textScrubPreview.lastScrubAt ? formatDateTime(textScrubPreview.lastScrubAt) : "never"}.
-        </p>
-
-        <div className="mb-4">
-          <TextScrubSettingsForm
-            transactionReasonMaxAgeDays={settings.transactionReasonMaxAgeDays}
-            invoiceTextMaxAgeDays={settings.invoiceTextMaxAgeDays}
-            loanTextMaxAgeDays={settings.loanTextMaxAgeDays}
-            issuanceNoteMaxAgeDays={settings.issuanceNoteMaxAgeDays}
-          />
-        </div>
-
-        <RunTextScrubForm />
       </section>
 
       <section className="card p-5">
@@ -205,26 +145,18 @@ function PreviewRow({
   eligible,
   total,
   days,
-  hideTotal = false,
 }: {
   label: string;
   eligible: number;
   total: number;
   days: number | null;
-  /** For a scrub preview, "total" isn't a meaningful separate figure. */
-  hideTotal?: boolean;
 }) {
   return (
     <div className="flex flex-wrap justify-between gap-2">
       <dt className="text-muted">{label}</dt>
       <dd>
         {days === null ? (
-          <span className="text-muted">no policy — never</span>
-        ) : hideTotal ? (
-          <>
-            {eligible.toLocaleString()}{" "}
-            <span className="text-muted">(older than {days} days)</span>
-          </>
+          <span className="text-muted">no policy — kept forever</span>
         ) : (
           <>
             {eligible.toLocaleString()} of {total.toLocaleString()}{" "}

@@ -7,7 +7,6 @@ import {
 } from "@/lib/support";
 import { SupportReplyForm, SupportStatusButtons } from "@/components/forms/support-forms";
 import { SupportStatusBadge } from "@/components/status-badge";
-import { formatDateTime } from "@/lib/datetime";
 
 export default async function GovSupportThread({ params }: PageProps<"/gov/support/[id]">) {
   const { id } = await params;
@@ -56,7 +55,7 @@ export default async function GovSupportThread({ params }: PageProps<"/gov/suppo
                     {fromGov ? `Government (${message.senderLabel})` : `@${message.senderLabel}`}
                   </p>
                   <p className="text-xs text-muted">
-                    {formatDateTime(message.createdAt)}
+                    {new Date(message.createdAt).toLocaleString()}
                   </p>
                 </div>
                 <p className="mt-2 whitespace-pre-line text-sm">{message.body}</p>

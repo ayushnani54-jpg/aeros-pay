@@ -3,7 +3,6 @@ import { getAllCompaniesForGovernment, getGovernmentSingleton } from "@/lib/quer
 import { CompanyStatusBadge } from "@/components/status-badge";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { effectiveCompanyStatus } from "@/lib/status";
-import { formatDate } from "@/lib/datetime";
 
 const TABS = ["ALL", "PENDING", "APPROVED", "SUSPENDED", "REJECTED", "REVOKED"];
 
@@ -25,8 +24,7 @@ export default async function GovCompaniesPage({ searchParams }: PageProps<"/gov
         <h1 className="text-2xl font-semibold tracking-tight">Companies</h1>
         <p className="mt-1 text-sm text-muted">
           Default company tax: {defaultTaxPercent.toFixed(2)}% · approval funds{" "}
-          {(gov?.companyApprovalFundingAmount ?? 3000).toLocaleString()} {CURRENCY_NAME} from the
-          treasury
+          {(5000).toLocaleString()} {CURRENCY_NAME} from the treasury
         </p>
       </div>
 
@@ -68,7 +66,7 @@ export default async function GovCompaniesPage({ searchParams }: PageProps<"/gov
                   {company.governmentOwned ? " · Government-held" : ""}
                 </p>
                 <p className="mt-1 text-xs text-muted">
-                  Applied {formatDate(company.createdAt)}
+                  Applied {new Date(company.createdAt).toLocaleDateString()}
                   {company.strikes > 0 ? ` · ${company.strikes} IP strike(s)` : ""}
                 </p>
               </div>

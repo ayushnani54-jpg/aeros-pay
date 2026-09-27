@@ -17,8 +17,7 @@ import {
   SaleStatusBadge,
 } from "@/components/status-badge";
 import { TransactionRow } from "@/components/transaction-row";
-import { CURRENCY_NAME } from "@/lib/constants";
-import { formatDate, formatDateTime } from "@/lib/datetime";
+import { COMPANY_APPROVAL_FUNDING_AMOUNT, CURRENCY_NAME } from "@/lib/constants";
 import { effectiveCompanyStatus } from "@/lib/status";
 
 export default async function GovCompanyDetail({ params }: PageProps<"/gov/companies/[id]">) {
@@ -59,14 +58,14 @@ export default async function GovCompanyDetail({ params }: PageProps<"/gov/compa
             </Link>
           </Row>
           <Row label="Category">{company.category}</Row>
-          <Row label="Applied">{formatDateTime(company.createdAt)}</Row>
+          <Row label="Applied">{new Date(company.createdAt).toLocaleString()}</Row>
           {company.reviewedAt && (
             <Row label="Reviewed">
-              {formatDateTime(company.reviewedAt)} by {company.reviewedBy}
+              {new Date(company.reviewedAt).toLocaleString()} by {company.reviewedBy}
             </Row>
           )}
           {company.fundedAt && (
-            <Row label="Funded">{formatDateTime(company.fundedAt)}</Row>
+            <Row label="Funded">{new Date(company.fundedAt).toLocaleString()}</Row>
           )}
           {company.rejectionReason && (
             <Row label="Rejection reason">{company.rejectionReason}</Row>
@@ -87,7 +86,7 @@ export default async function GovCompanyDetail({ params }: PageProps<"/gov/compa
           <h2 className="mb-3 font-medium">Review this application</h2>
           <CompanyReviewActions
             companyId={company.id}
-            fundingAmount={gov?.companyApprovalFundingAmount ?? 3000}
+            fundingAmount={COMPANY_APPROVAL_FUNDING_AMOUNT}
           />
         </section>
       )}
@@ -122,7 +121,9 @@ export default async function GovCompanyDetail({ params }: PageProps<"/gov/compa
         {company.governmentOwned && (
           <p className="mt-3 text-sm">
             This company is under Government stewardship (acquired{" "}
-            {company.governmentAcquiredAt ? formatDate(company.governmentAcquiredAt) : "—"}
+            {company.governmentAcquiredAt
+              ? new Date(company.governmentAcquiredAt).toLocaleDateString()
+              : "—"}
             ).
           </p>
         )}
@@ -174,7 +175,7 @@ export default async function GovCompanyDetail({ params }: PageProps<"/gov/compa
                   <p className="font-medium">{loan.loanNumber}</p>
                   <p className="text-xs text-muted">
                     {(loan.principal ?? loan.requestedAmount).toLocaleString()} {CURRENCY_NAME} ·{" "}
-                    {formatDate(loan.createdAt)}
+                    {new Date(loan.createdAt).toLocaleDateString()}
                   </p>
                 </div>
                 <LoanStatusBadge status={loan.status} />
@@ -196,7 +197,7 @@ export default async function GovCompanyDetail({ params }: PageProps<"/gov/compa
                   </p>
                   <p className="text-xs text-muted">
                     from {offer.offerorType === "GOVERNMENT" ? "Government" : "a user"} ·{" "}
-                    {formatDate(offer.createdAt)}
+                    {new Date(offer.createdAt).toLocaleDateString()}
                   </p>
                 </div>
                 <SaleStatusBadge status={offer.status} />
@@ -219,7 +220,7 @@ export default async function GovCompanyDetail({ params }: PageProps<"/gov/compa
                   <p className="font-medium">{invoice.itemName}</p>
                   <p className="text-xs text-muted">
                     {invoice.invoiceNumber} ·{" "}
-                    {formatDate(invoice.createdAt)}
+                    {new Date(invoice.createdAt).toLocaleDateString()}
                   </p>
                 </div>
                 <div className="text-right">
@@ -262,7 +263,7 @@ export default async function GovCompanyDetail({ params }: PageProps<"/gov/compa
               <div key={log.id} className="py-3 text-sm">
                 <p className="font-medium">{log.action.replace(/_/g, " ")}</p>
                 <p className="text-xs text-muted">
-                  {log.actorLabel} · {formatDateTime(log.createdAt)}
+                  {log.actorLabel} · {new Date(log.createdAt).toLocaleString()}
                   {log.previousValue || log.newValue
                     ? ` · ${log.previousValue ?? "—"} → ${log.newValue ?? "—"}`
                     : ""}

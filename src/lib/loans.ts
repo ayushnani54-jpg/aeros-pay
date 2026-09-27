@@ -16,7 +16,6 @@ import { transferInTx } from "./payments";
 import { companyWallet, governmentWallet } from "./wallets";
 import { effectiveCompanyStatus } from "./status";
 import { getCompanySalesFigure } from "./sales";
-import { formatDate, istCalendarDaysBetween } from "./datetime";
 import type { Company, Loan, LoanInstalment } from "@/db/schema";
 
 /**
@@ -204,9 +203,9 @@ export async function checkLoanEligibility(
   }
 
   const approvedAt = company.reviewedAt ?? company.createdAt;
-  // IST calendar days, consistent with every other day-boundary rule in the
-  // app — see src/lib/datetime.ts.
-  const companyAgeDays = istCalendarDaysBetween(approvedAt, new Date());
+  const companyAgeDays = Math.floor(
+    (Date.now() - approvedAt.getTime()) / (24 * 60 * 60 * 1000),
+  );
   if (companyAgeDays < p.minCompanyAgeDays) {
     reasons.push(
       `The company must have been approved for at least ${p.minCompanyAgeDays} days (currently ${companyAgeDays}).`,
@@ -831,23 +830,26 @@ const STAGE_ORDER: ReminderStage[] = [
   "FINAL_NOTICE",
 ];
 
+function startOfDay(d: Date): number {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x.getTime();
+}
+
 /**
  * Which escalating stage an instalment is currently in, if any.
  *
- * Deliberately measured in IST CALENDAR days, not elapsed hours: an
- * instalment due tomorrow at noon should say "due tomorrow" when read this
- * evening, not "due today" just because fewer than 24 hours remain — and
- * "tomorrow" means the next India Standard Time calendar day specifically,
- * so every viewer (and every other day-boundary rule in the app) agrees on
- * where a day starts, regardless of the server's or the viewer's own
- * timezone.
+ * Deliberately measured in CALENDAR days, not elapsed hours: an instalment due
+ * tomorrow at noon should say "due tomorrow" when read this evening, not "due
+ * today" just because fewer than 24 hours remain.
  */
 export function reminderStageFor(
   dueAt: Date,
   graceDays: number,
   now = new Date(),
 ): ReminderStage | null {
-  const dayDiff = istCalendarDaysBetween(now, dueAt);
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const dayDiff = Math.round((startOfDay(dueAt) - startOfDay(now)) / msPerDay);
 
   if (dayDiff <= -graceDays) return "FINAL_NOTICE";
   if (dayDiff <= -3) return "OVERDUE_3D";
@@ -865,7 +867,7 @@ function stageMessage(
   amount: number,
   dueAt: Date,
 ): string {
-  const due = formatDate(dueAt);
+  const due = dueAt.toLocaleDateString();
   const amt = amount.toLocaleString();
   switch (stage) {
     case "UPCOMING_3D":

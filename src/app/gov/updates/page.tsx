@@ -1,6 +1,5 @@
 import { getAllUpdates } from "@/lib/queries";
 import { PublishUpdateForm } from "@/components/forms/publish-update-form";
-import { formatDateTime } from "@/lib/datetime";
 
 export default async function GovUpdatesPage() {
   const updates = await getAllUpdates();
@@ -19,7 +18,7 @@ export default async function GovUpdatesPage() {
           <div key={u.id} className="card p-5">
             <div className="flex items-center justify-between">
               <h3 className="font-medium">{u.title}</h3>
-              <span className="text-xs text-muted">{formatDateTime(u.createdAt)}</span>
+              <span className="text-xs text-muted">{new Date(u.createdAt).toLocaleString()}</span>
             </div>
             <p className="mt-2 whitespace-pre-wrap text-sm text-muted">{u.content}</p>
           </div>

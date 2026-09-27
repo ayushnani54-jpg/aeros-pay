@@ -7,7 +7,6 @@ import { CompanyStatusBadge } from "@/components/status-badge";
 import { BuyCompanyButton, MakeOfferForm } from "@/components/forms/company-forms";
 import { effectiveCompanyStatus } from "@/lib/status";
 import { CURRENCY_NAME } from "@/lib/constants";
-import { formatDate } from "@/lib/datetime";
 
 /**
  * Public company profile.
@@ -64,7 +63,7 @@ export default async function PublicCompanyProfile({ params }: PageProps<"/c/[us
           )}
         </p>
         <p className="mt-1 text-xs text-muted">
-          Trading since {formatDate(company.createdAt)}
+          Trading since {new Date(company.createdAt).toLocaleDateString()}
         </p>
 
         {status === "APPROVED" && !isOwner && (

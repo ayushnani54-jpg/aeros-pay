@@ -13,7 +13,6 @@ import { CompanyStatusBadge, StatusBadge } from "@/components/status-badge";
 import { TransactionRow } from "@/components/transaction-row";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { formatSuspensionRemaining } from "@/lib/status";
-import { formatDateTime } from "@/lib/datetime";
 
 export default async function GovUserDetail({ params }: PageProps<"/gov/users/[id]">) {
   const { id } = await params;
@@ -47,20 +46,20 @@ export default async function GovUserDetail({ params }: PageProps<"/gov/users/[i
       <section className="card p-5">
         <h2 className="mb-3 font-medium">Account</h2>
         <dl className="space-y-1 text-sm">
-          <Row label="Registered" value={formatDateTime(user.createdAt)} />
+          <Row label="Registered" value={new Date(user.createdAt).toLocaleString()} />
           <Row label="Stored status" value={user.status} />
           <Row label="Effective status" value={user.effectiveStatus} />
           {user.suspendedUntil && (
             <Row
               label="Suspended until"
-              value={`${formatDateTime(user.suspendedUntil)} (${formatSuspensionRemaining(user.suspendedUntil)} left)`}
+              value={`${new Date(user.suspendedUntil).toLocaleString()} (${formatSuspensionRemaining(user.suspendedUntil)} left)`}
             />
           )}
           {user.suspensionReason && <Row label="Suspension reason" value={user.suspensionReason} />}
           {user.bannedAt && (
             <Row
               label="Banned"
-              value={`${formatDateTime(user.bannedAt)} by ${user.bannedBy ?? "—"}`}
+              value={`${new Date(user.bannedAt).toLocaleString()} by ${user.bannedBy ?? "—"}`}
             />
           )}
           {user.banReason && <Row label="Ban reason" value={user.banReason} />}
@@ -68,7 +67,7 @@ export default async function GovUserDetail({ params }: PageProps<"/gov/users/[i
             label="Password last changed"
             value={
               user.passwordUpdatedAt
-                ? formatDateTime(user.passwordUpdatedAt)
+                ? new Date(user.passwordUpdatedAt).toLocaleString()
                 : "never"
             }
           />
@@ -179,7 +178,7 @@ export default async function GovUserDetail({ params }: PageProps<"/gov/users/[i
               <div key={log.id} className="py-3 text-sm">
                 <p className="font-medium">{log.action.replace(/_/g, " ")}</p>
                 <p className="text-xs text-muted">
-                  {log.actorLabel} · {formatDateTime(log.createdAt)}
+                  {log.actorLabel} · {new Date(log.createdAt).toLocaleString()}
                   {log.previousValue || log.newValue
                     ? ` · ${log.previousValue ?? "—"} → ${log.newValue ?? "—"}`
                     : ""}
@@ -201,7 +200,7 @@ export default async function GovUserDetail({ params }: PageProps<"/gov/users/[i
               <div key={n.id} className="py-2 text-sm">
                 <p>{n.message}</p>
                 <p className="text-xs text-muted">
-                  {formatDateTime(n.createdAt)}
+                  {new Date(n.createdAt).toLocaleString()}
                 </p>
               </div>
             ))}

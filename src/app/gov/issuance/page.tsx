@@ -1,16 +1,12 @@
 import Link from "next/link";
-import { getAllIssuanceRequests, getGovernmentSingleton } from "@/lib/queries";
+import { getAllIssuanceRequests } from "@/lib/queries";
 import { getApprovalProgress } from "@/lib/issuance";
 import { IssuanceStatusBadge } from "@/components/status-badge";
 import { CreateIssuanceForm } from "@/components/forms/create-issuance-form";
-import { formatDateTime } from "@/lib/datetime";
 import { CURRENCY_NAME } from "@/lib/constants";
 
 export default async function GovIssuancePage() {
-  const [requests, gov] = await Promise.all([
-    getAllIssuanceRequests(),
-    getGovernmentSingleton(),
-  ]);
+  const requests = await getAllIssuanceRequests();
   const withProgress = await Promise.all(
     requests.map(async (r) => ({ request: r, progress: await getApprovalProgress(r.id) })),
   );
@@ -21,7 +17,7 @@ export default async function GovIssuancePage() {
 
       <section className="card p-5">
         <h2 className="mb-3 font-medium">New issuance request</h2>
-        <CreateIssuanceForm maxAmount={gov?.maxIssuanceAmount ?? 10000} />
+        <CreateIssuanceForm />
       </section>
 
       <section className="space-y-3">
@@ -40,7 +36,7 @@ export default async function GovIssuancePage() {
             <p className="mt-1 text-sm text-muted">{request.reason}</p>
             <p className="mt-2 text-xs text-muted">
               {progress.approveCount} of {progress.eligibleCount} users approved ·{" "}
-              {formatDateTime(request.createdAt)}
+              {new Date(request.createdAt).toLocaleString()}
             </p>
           </Link>
         ))}

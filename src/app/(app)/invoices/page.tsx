@@ -3,7 +3,6 @@ import { getCurrentUser } from "@/lib/auth";
 import { getInvoicesForBuyer, expireOverdueInvoices } from "@/lib/invoices";
 import { InvoiceStatusBadge } from "@/components/status-badge";
 import { CURRENCY_NAME } from "@/lib/constants";
-import { formatDate } from "@/lib/datetime";
 
 export default async function InvoicesPage() {
   const user = await getCurrentUser();
@@ -39,7 +38,7 @@ export default async function InvoicesPage() {
                   </p>
                   {invoice.dueAt && (
                     <p className="mt-1 text-xs text-muted">
-                      Due {formatDate(invoice.dueAt)}
+                      Due {new Date(invoice.dueAt).toLocaleDateString()}
                     </p>
                   )}
                 </div>
@@ -69,7 +68,7 @@ export default async function InvoicesPage() {
                   <p className="font-medium">{invoice.itemName}</p>
                   <p className="text-xs text-muted">
                     {companyName} · {invoice.invoiceNumber} ·{" "}
-                    {formatDate(invoice.createdAt)}
+                    {new Date(invoice.createdAt).toLocaleDateString()}
                   </p>
                 </div>
                 <div className="text-right">

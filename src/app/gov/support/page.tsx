@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { getSupportInbox } from "@/lib/support";
 import { SupportStatusBadge } from "@/components/status-badge";
-import { formatDate } from "@/lib/datetime";
 
 export default async function GovSupportPage() {
   const threads = await getSupportInbox();
@@ -46,7 +45,7 @@ export default async function GovSupportPage() {
                 <SupportStatusBadge status={thread.status} />
                 {thread.lastMessageAt && (
                   <p className="text-xs text-muted">
-                    {formatDate(thread.lastMessageAt)}
+                    {new Date(thread.lastMessageAt).toLocaleDateString()}
                   </p>
                 )}
               </div>
