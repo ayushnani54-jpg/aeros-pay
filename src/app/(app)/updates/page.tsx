@@ -3,6 +3,7 @@ import { getAllUpdates, getOpenIssuanceRequestsForUser } from "@/lib/queries";
 import { getApprovalProgress } from "@/lib/issuance";
 import { IssuanceVoteButtons } from "@/components/forms/issuance-vote-buttons";
 import { CURRENCY_NAME } from "@/lib/constants";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 export default async function UpdatesPage() {
   const user = await getCurrentUser();
@@ -33,7 +34,7 @@ export default async function UpdatesPage() {
               <p className="mt-1 text-sm text-muted">&ldquo;{request.reason}&rdquo;</p>
               {request.note && <p className="mt-1 text-sm text-muted">{request.note}</p>}
               <p className="mt-2 text-xs text-muted">
-                Opened {new Date(request.createdAt).toLocaleString()}
+                Opened {formatDateTime(request.createdAt)}
               </p>
 
               <div className="mt-3">
@@ -77,7 +78,7 @@ export default async function UpdatesPage() {
               <div className="flex items-start justify-between gap-3">
                 <h3 className="font-medium">{update.title}</h3>
                 <span className="shrink-0 text-xs text-muted">
-                  {new Date(update.createdAt).toLocaleDateString()}
+                  {formatDate(update.createdAt)}
                 </span>
               </div>
               <p className="mt-2 whitespace-pre-line text-sm text-muted">{update.content}</p>

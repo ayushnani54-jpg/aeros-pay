@@ -21,6 +21,9 @@ before starting the next. They are in the `drizzle/` folder of the project:
 | 2 | `0002_v2_upgrade.sql` → **PART 2** | Adds companies, invoices, support, IP tables |
 | 3 | `0003_v2_sales_loans.sql` → **PART 1** | Adds sale/loan data types |
 | 4 | `0003_v2_sales_loans.sql` → **PART 2** | Adds company-sale and loan tables |
+| 5 | `0004_configurable_policy.sql` (whole file) | Adds the editable policy settings + clearing settings |
+
+Block 5 is one single file — no PART split, paste the whole thing at once.
 
 Each file is clearly split with a big comment line saying `PART 1` and
 `PART 2`. Copy everything from one PART marker to the next.
@@ -108,6 +111,52 @@ else.
 - **Password reset** — issues a one-time temporary password and signs the user
   out everywhere. You still cannot *see* anyone's password; they are stored as
   irreversible hashes.
+
+### Settings you can now change yourself (Government → Tax & Economy)
+- **Company approval funding** — how many Aeros a company gets when you approve
+  it. Now **3,000** by default, and you can still type a different one-off
+  amount on any single approval.
+- **Maximum issuance amount** — now **10,000** Aeros per issuance request
+  (was a fixed 5,000 you could not change).
+- **Issuance frequency** — now **once per calendar day, India time** (was once
+  per 7 days). Set it to 0 to remove the daily limit, or higher to space
+  issuances further apart.
+
+These three are enforced on the server, inside the same locked transaction that
+moves the money, so nothing typed into a browser can get around them.
+
+### Everything now shows India time
+Every timestamp in the app — transactions, receipts, audit logs,
+notifications, invoices, loan instalments, sale records, issuance — is
+displayed in **IST (Asia/Kolkata)** for everyone, wherever they are. The
+day-based rules use IST day boundaries too: the daily issuance limit, the
+7-day company-sale eligibility window and loan due dates/reminders.
+
+### Closing the browser now logs you out
+The login cookie is no longer a permanent one. Close the browser and reopen
+the site and you get the **login page**, not the old dashboard. Moving between
+pages during a session works exactly as before, and closing a single tab while
+the browser stays open does not sign you out.
+
+### Clearing old data (Government → Retention)
+Neon's free plan has a storage limit, so you can now shrink the heavy parts
+without losing anything that matters:
+
+- **Transaction notes** can be cleared after an age you set. The transaction
+  itself — amount, tax, sender, receiver, TX number, date — stays **forever**.
+  Only the free-text reason is replaced with `[cleared]`.
+- **Invoice descriptions/notes**, **loan purpose and decision notes**, and
+  **issuance notes** work the same way: the text goes, the numbers and dates
+  stay.
+- **Updates, announcements and notifications** can be deleted outright after
+  an age you set — these are the disposable ones.
+- **Never touched by any of this:** passwords, usernames, user and company
+  balances, the treasury, total supply, transaction amounts/IDs/dates,
+  ownership and sale records, loan principal and schedules. The ledger cannot
+  be cleared — by design, there is no code path that can do it.
+
+Every clearing run is written to the audit log first, and running it twice is
+harmless.
 
 ### One rule that changed
 Aeros issuance used to need **every** eligible user to approve. V2 uses a

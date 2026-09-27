@@ -1,5 +1,6 @@
 import type { Transaction } from "@/db/schema";
 import { CURRENCY_NAME } from "@/lib/constants";
+import { formatDateTime } from "@/lib/datetime";
 
 type PartyType = "USER" | "GOVERNMENT" | "COMPANY";
 
@@ -74,7 +75,7 @@ export function TransactionRow({
         </p>
         <p className="text-xs text-muted">
           {TYPE_LABELS[tx.type] ?? tx.type} · {tx.txRef} ·{" "}
-          {new Date(tx.createdAt).toLocaleString()}
+          {formatDateTime(tx.createdAt)}
         </p>
         {tx.reason && <p className="truncate text-xs text-muted">{tx.reason}</p>}
       </div>

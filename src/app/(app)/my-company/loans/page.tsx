@@ -17,6 +17,7 @@ import {
 import { InstalmentStatusBadge, LoanStatusBadge } from "@/components/status-badge";
 import { CURRENCY_NAME } from "@/lib/constants";
 import type { LoanInstalment } from "@/db/schema";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 const STAGE_TEXT: Record<string, string> = {
   UPCOMING_3D: "Due in 3 days",
@@ -108,7 +109,7 @@ export default async function CompanyLoansPage() {
                   <p className="font-medium">{loan.loanNumber}</p>
                   <p className="text-xs text-muted">
                     {(loan.principal ?? loan.requestedAmount).toLocaleString()} {CURRENCY_NAME} ·{" "}
-                    {new Date(loan.createdAt).toLocaleDateString()}
+                    {formatDate(loan.createdAt)}
                   </p>
                   {loan.rejectionReason && (
                     <p className="mt-1 text-xs text-muted">Reason: {loan.rejectionReason}</p>
@@ -216,7 +217,7 @@ function LoanCard({
             {loan.nextDueAt && (
               <p className="mt-3 text-sm">
                 <span className="text-muted">Next payment due: </span>
-                {new Date(loan.nextDueAt).toLocaleDateString()}
+                {formatDate(loan.nextDueAt)}
               </p>
             )}
 
@@ -282,7 +283,7 @@ function InstalmentNotice({
             Instalment {instalment.sequence} of {instalmentCount}
           </p>
           <p className="text-xs text-muted">
-            {loanNumber} · due {new Date(instalment.dueAt).toLocaleDateString()}
+            {loanNumber} · due {formatDate(instalment.dueAt)}
           </p>
         </div>
         <div className="flex flex-col items-end gap-1">
@@ -314,7 +315,7 @@ function InstalmentNotice({
 
       {instalment.status === "PAID" ? (
         <p className="mt-3 text-xs text-muted">
-          Paid {instalment.paidAt ? new Date(instalment.paidAt).toLocaleString() : ""} · Ref{" "}
+          Paid {instalment.paidAt ? formatDateTime(instalment.paidAt) : ""} · Ref{" "}
           {instalment.paidTxRef}
         </p>
       ) : (

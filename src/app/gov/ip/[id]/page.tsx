@@ -5,6 +5,7 @@ import { getCompanyAdminProfile } from "@/lib/queries";
 import { IpDecisionForm } from "@/components/forms/gov-forms";
 import { IpStatusBadge } from "@/components/status-badge";
 import { CURRENCY_NAME } from "@/lib/constants";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 export default async function GovIpDetail({ params }: PageProps<"/gov/ip/[id]">) {
   const { id } = await params;
@@ -57,7 +58,7 @@ export default async function GovIpDetail({ params }: PageProps<"/gov/ip/[id]">)
             </div>
           )}
           <p className="text-xs text-muted">
-            Filed {new Date(complaint.createdAt).toLocaleString()}
+            Filed {formatDateTime(complaint.createdAt)}
           </p>
         </div>
       </section>
@@ -71,7 +72,7 @@ export default async function GovIpDetail({ params }: PageProps<"/gov/ip/[id]">)
           <p className="mt-2 text-sm text-muted">{complaint.decisionReason}</p>
           <p className="mt-2 text-xs text-muted">
             Decided by {complaint.decidedBy} on{" "}
-            {complaint.decidedAt ? new Date(complaint.decidedAt).toLocaleString() : ""}
+            {complaint.decidedAt ? formatDateTime(complaint.decidedAt) : ""}
           </p>
         </section>
       ) : (
@@ -127,7 +128,7 @@ function PartyCard({
         </div>
         <div className="flex justify-between">
           <dt>Registered</dt>
-          <dd>{new Date(profile.company.createdAt).toLocaleDateString()}</dd>
+          <dd>{formatDate(profile.company.createdAt)}</dd>
         </div>
       </dl>
       <p className="mt-3 text-xs text-muted">

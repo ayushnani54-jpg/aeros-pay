@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
 import { getNotificationsForUser } from "@/lib/queries";
 import { MarkAllReadButton } from "@/components/forms/mark-read-button";
+import { formatDateTime } from "@/lib/datetime";
 
 /**
  * Personal notifications — separate from the public Updates feed (spec §34).
@@ -42,7 +43,7 @@ export default async function NotificationsPage() {
                   {n.message}
                 </p>
                 <p className="mt-0.5 text-xs text-muted">
-                  {new Date(n.createdAt).toLocaleString()}
+                  {formatDateTime(n.createdAt)}
                 </p>
               </>
             );

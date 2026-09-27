@@ -407,6 +407,35 @@ export const retentionSettingsSchema = z.object({
   supportRetentionDays: z.string().trim(),
 });
 
+/** V2.1: Government-configurable economy policy (funding amount, issuance
+ * cap, issuance cooldown) — previously hardcoded constants. */
+export const economyPolicySchema = z.object({
+  companyApprovalFundingAmount: z.coerce
+    .number()
+    .int()
+    .min(0, "Must be zero or more.")
+    .max(1_000_000, "Must be at most 1,000,000."),
+  maxIssuanceAmount: z.coerce
+    .number()
+    .int()
+    .min(1, "Must be at least 1.")
+    .max(1_000_000, "Must be at most 1,000,000."),
+  issuanceCooldownDays: z.coerce
+    .number()
+    .int()
+    .min(0, "Must be zero or more.")
+    .max(365, "Must be at most 365."),
+});
+
+/** V2.1: text-field scrubbing ages, one per data class. Empty = never scrub
+ * that class. */
+export const textScrubSettingsSchema = z.object({
+  transactionReasonMaxAgeDays: z.string().trim(),
+  invoiceTextMaxAgeDays: z.string().trim(),
+  loanTextMaxAgeDays: z.string().trim(),
+  issuanceNoteMaxAgeDays: z.string().trim(),
+});
+
 export const confirmPhraseSchema = z.object({
   confirm: z.string().trim(),
 });

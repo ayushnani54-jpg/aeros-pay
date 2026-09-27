@@ -17,12 +17,15 @@ import {
   rejectLoanAction,
   resetUserPasswordAction,
   runCleanupAction,
+  runTextScrubAction,
   setCompanyDefaultTaxAction,
   setCompanyStatusAction,
   setCompanyTaxAction,
+  setEconomyPolicyAction,
   setLoanPolicyAction,
   setRetentionAction,
   setSalePolicyAction,
+  setTextScrubSettingsAction,
   suspendUserUntilAction,
   unarchiveAuditAction,
 } from "@/actions/government";
@@ -653,6 +656,89 @@ export function SalePolicyForm({
   );
 }
 
+/**
+ * V2.1 — company approval funding amount, the per-execution issuance cap,
+ * and the issuance cooldown (now "N India Standard Time calendar days since
+ * the last execution", not a rolling N×24h window). Previously hardcoded
+ * constants.
+ */
+export function EconomyPolicyForm({
+  companyApprovalFundingAmount,
+  maxIssuanceAmount,
+  issuanceCooldownDays,
+}: {
+  companyApprovalFundingAmount: number;
+  maxIssuanceAmount: number;
+  issuanceCooldownDays: number;
+}) {
+  const [state, formAction, pending] = useActionState(setEconomyPolicyAction, null);
+
+  return (
+    <form action={formAction} className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div>
+          <label htmlFor="epFunding" className="mb-1 block text-xs font-medium">
+            Company approval funding ({CURRENCY_NAME})
+          </label>
+          <input
+            id="epFunding"
+            name="companyApprovalFundingAmount"
+            type="number"
+            min={0}
+            max={1_000_000}
+            step={1}
+            className="input"
+            defaultValue={companyApprovalFundingAmount}
+            required
+          />
+        </div>
+        <div>
+          <label htmlFor="epMaxIssuance" className="mb-1 block text-xs font-medium">
+            Max issuance per execution ({CURRENCY_NAME})
+          </label>
+          <input
+            id="epMaxIssuance"
+            name="maxIssuanceAmount"
+            type="number"
+            min={1}
+            max={1_000_000}
+            step={1}
+            className="input"
+            defaultValue={maxIssuanceAmount}
+            required
+          />
+        </div>
+        <div>
+          <label htmlFor="epCooldown" className="mb-1 block text-xs font-medium">
+            Issuance cooldown (IST calendar days)
+          </label>
+          <input
+            id="epCooldown"
+            name="issuanceCooldownDays"
+            type="number"
+            min={0}
+            max={365}
+            step={1}
+            className="input"
+            defaultValue={issuanceCooldownDays}
+            required
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted">
+        A new company is funded once, on approval, with this amount (unless a one-off override is
+        used). The issuance cooldown is measured in India Standard Time calendar days — 1 means
+        Government can execute at most one issuance per IST calendar day.
+      </p>
+      <Err state={state} />
+      <Ok state={state} text="Economy policy updated." />
+      <button type="submit" className="btn btn-primary" disabled={pending}>
+        {pending ? "Saving…" : "Save economy policy"}
+      </button>
+    </form>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Loans
 // ---------------------------------------------------------------------------
@@ -1085,6 +1171,109 @@ export function RetentionSettingsForm({
       <Ok state={state} text="Retention settings saved." />
       <button type="submit" className="btn btn-primary" disabled={pending}>
         {pending ? "Saving…" : "Save retention settings"}
+      </button>
+    </form>
+  );
+}
+
+/**
+ * V2.1 — text-field scrubbing ages. A separate, narrower capability from row
+ * deletion above: this never deletes a row, only blanks specific free-text
+ * columns (never an amount, party, id, status or timestamp) once a row is
+ * older than the configured age.
+ */
+export function TextScrubSettingsForm({
+  transactionReasonMaxAgeDays,
+  invoiceTextMaxAgeDays,
+  loanTextMaxAgeDays,
+  issuanceNoteMaxAgeDays,
+}: {
+  transactionReasonMaxAgeDays: number | null;
+  invoiceTextMaxAgeDays: number | null;
+  loanTextMaxAgeDays: number | null;
+  issuanceNoteMaxAgeDays: number | null;
+}) {
+  const [state, formAction, pending] = useActionState(setTextScrubSettingsAction, null);
+
+  return (
+    <form action={formAction} className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div>
+          <label htmlFor="tsTx" className="mb-1 block text-sm font-medium">
+            Transaction reasons (days)
+          </label>
+          <input
+            id="tsTx"
+            name="transactionReasonMaxAgeDays"
+            className="input"
+            defaultValue={transactionReasonMaxAgeDays ?? ""}
+            placeholder="Never"
+          />
+        </div>
+        <div>
+          <label htmlFor="tsInv" className="mb-1 block text-sm font-medium">
+            Invoice text (days)
+          </label>
+          <input
+            id="tsInv"
+            name="invoiceTextMaxAgeDays"
+            className="input"
+            defaultValue={invoiceTextMaxAgeDays ?? ""}
+            placeholder="Never"
+          />
+        </div>
+        <div>
+          <label htmlFor="tsLoan" className="mb-1 block text-sm font-medium">
+            Loan text (days)
+          </label>
+          <input
+            id="tsLoan"
+            name="loanTextMaxAgeDays"
+            className="input"
+            defaultValue={loanTextMaxAgeDays ?? ""}
+            placeholder="Never"
+          />
+        </div>
+        <div>
+          <label htmlFor="tsIss" className="mb-1 block text-sm font-medium">
+            Issuance notes (days)
+          </label>
+          <input
+            id="tsIss"
+            name="issuanceNoteMaxAgeDays"
+            className="input"
+            defaultValue={issuanceNoteMaxAgeDays ?? ""}
+            placeholder="Never"
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted">
+        Leave a field blank to never scrub that class. This only clears free-text notes/reasons —
+        amounts, ids, parties, statuses and timestamps are never touched, and rows are never
+        deleted.
+      </p>
+      <Err state={state} />
+      <Ok state={state} text="Text-scrub settings saved." />
+      <button type="submit" className="btn btn-primary" disabled={pending}>
+        {pending ? "Saving…" : "Save text-scrub settings"}
+      </button>
+    </form>
+  );
+}
+
+export function RunTextScrubForm() {
+  const [state, formAction, pending] = useActionState(runTextScrubAction, null);
+
+  return (
+    <form action={formAction} className="space-y-3">
+      <label htmlFor="scrubConfirm" className="block text-sm font-medium">
+        Type <span className="font-mono">{MAINTENANCE_CONFIRM_PHRASE}</span> to confirm
+      </label>
+      <input id="scrubConfirm" name="confirm" className="input" autoComplete="off" required />
+      <Err state={state} />
+      {state?.ok && <p className="text-sm text-success">{state.data.summary}</p>}
+      <button type="submit" className="btn btn-danger text-sm" disabled={pending}>
+        {pending ? "Clearing…" : "Clear text fields now"}
       </button>
     </form>
   );

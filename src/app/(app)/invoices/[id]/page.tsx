@@ -6,6 +6,7 @@ import { InvoiceStatusBadge } from "@/components/status-badge";
 import { PayInvoiceButton } from "@/components/forms/invoice-forms";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { formatTaxRateBp } from "@/lib/tax";
+import { formatDateTime } from "@/lib/datetime";
 
 export default async function InvoiceDetailPage({ params }: PageProps<"/invoices/[id]">) {
   const user = await getCurrentUser();
@@ -75,12 +76,12 @@ export default async function InvoiceDetailPage({ params }: PageProps<"/invoices
         </p>
 
         <dl className="mt-5 space-y-1 text-xs text-muted">
-          <Row label="Issued" value={new Date(invoice.createdAt).toLocaleString()} />
+          <Row label="Issued" value={formatDateTime(invoice.createdAt)} />
           {invoice.dueAt && (
-            <Row label="Due" value={new Date(invoice.dueAt).toLocaleString()} />
+            <Row label="Due" value={formatDateTime(invoice.dueAt)} />
           )}
           {invoice.paidAt && (
-            <Row label="Paid" value={new Date(invoice.paidAt).toLocaleString()} />
+            <Row label="Paid" value={formatDateTime(invoice.paidAt)} />
           )}
           {invoice.paidTxRef && <Row label="Transaction" value={invoice.paidTxRef} />}
         </dl>

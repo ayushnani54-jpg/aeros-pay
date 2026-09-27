@@ -4,6 +4,7 @@ import { getComplaintsForCompany } from "@/lib/ip";
 import { IpComplaintForm } from "@/components/forms/company-forms";
 import { IpStatusBadge } from "@/components/status-badge";
 import { effectiveCompanyStatus } from "@/lib/status";
+import { formatDate } from "@/lib/datetime";
 
 export default async function CompanyComplaintsPage() {
   const ctx = await getActingContext();
@@ -56,7 +57,7 @@ export default async function CompanyComplaintsPage() {
                     </p>
                     <p className="mt-1 text-xs text-muted">
                       {row.complaint.complaintNumber} ·{" "}
-                      {new Date(row.complaint.createdAt).toLocaleDateString()}
+                      {formatDate(row.complaint.createdAt)}
                     </p>
                   </div>
                   <IpStatusBadge status={row.complaint.status} />
@@ -89,7 +90,7 @@ export default async function CompanyComplaintsPage() {
                     <p className="text-sm text-muted">Filed by {row.complainantName}</p>
                     <p className="mt-1 text-xs text-muted">
                       {row.complaint.complaintNumber} ·{" "}
-                      {new Date(row.complaint.createdAt).toLocaleDateString()}
+                      {formatDate(row.complaint.createdAt)}
                     </p>
                   </div>
                   <IpStatusBadge status={row.complaint.status} />

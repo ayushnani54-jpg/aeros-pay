@@ -176,12 +176,45 @@ export const government = pgTable("government", {
   loanDefaultGraceDays: integer("loan_default_grace_days").notNull().default(7),
   loanPolicyUpdatedAt: timestamp("loan_policy_updated_at", { withTimezone: true }),
 
+  // --- V2.1: configurable policy (previously hardcoded constants) -----------
+  /** Aeros the Government funds a company with on approval, when the
+   * approval action does not supply a one-off override amount. */
+  companyApprovalFundingAmount: integer("company_approval_funding_amount")
+    .notNull()
+    .default(3000),
+  companyApprovalFundingUpdatedAt: timestamp("company_approval_funding_updated_at", {
+    withTimezone: true,
+  }),
+  /** Hard cap on a single issuance request/execution. */
+  maxIssuanceAmount: integer("max_issuance_amount").notNull().default(10000),
+  maxIssuanceAmountUpdatedAt: timestamp("max_issuance_amount_updated_at", {
+    withTimezone: true,
+  }),
+  /** Days that must elapse after an executed issuance before another may be
+   * executed. */
+  issuanceCooldownDays: integer("issuance_cooldown_days").notNull().default(1),
+  issuanceCooldownUpdatedAt: timestamp("issuance_cooldown_updated_at", {
+    withTimezone: true,
+  }),
+
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
 }, (t) => ([
   check("government_balance_nonnegative", sql`${t.balance} >= 0`),
   check("government_tax_rate_bounds", sql`${t.taxRateBp} >= 0 AND ${t.taxRateBp} <= 10000`),
+  check(
+    "government_company_approval_funding_bounds",
+    sql`${t.companyApprovalFundingAmount} >= 0 AND ${t.companyApprovalFundingAmount} <= 1000000`,
+  ),
+  check(
+    "government_max_issuance_amount_bounds",
+    sql`${t.maxIssuanceAmount} >= 1 AND ${t.maxIssuanceAmount} <= 1000000`,
+  ),
+  check(
+    "government_issuance_cooldown_bounds",
+    sql`${t.issuanceCooldownDays} >= 0 AND ${t.issuanceCooldownDays} <= 365`,
+  ),
 ]));
 
 // ---------------------------------------------------------------------------
@@ -414,7 +447,10 @@ export const issuanceRequests = pgTable("issuance_requests", {
   /** V2: optional Government note shown alongside the request. */
   note: text("note"),
 }, (t) => ([
-  check("issuance_amount_bounds", sql`${t.amount} >= 1 AND ${t.amount} <= 5000`),
+  // The real, Government-configurable limit lives on `government.max_issuance_amount`
+  // and is enforced in application logic (src/lib/issuance.ts). This check is
+  // just a generous sanity ceiling — defense-in-depth, not the source of truth.
+  check("issuance_amount_bounds", sql`${t.amount} >= 1 AND ${t.amount} <= 1000000`),
 ]));
 
 // Snapshot of eligible voters at request creation time — immutable, so
@@ -591,6 +627,22 @@ export const retentionSettings = pgTable("retention_settings", {
   supportRetentionDays: integer("support_retention_days"),
   lastCleanupAt: timestamp("last_cleanup_at", { withTimezone: true }),
   lastCleanupSummary: jsonb("last_cleanup_summary"),
+
+  // --- V2.1: TEXT-FIELD SCRUBBING ---------------------------------------
+  // A separate, narrower capability from the row-deletion settings above.
+  // This never deletes a row and never touches a financial column (amount,
+  // party, id, status, timestamp) — it only blanks specific free-text
+  // columns on rows older than the configured age, so storage on Neon's
+  // free tier can be trimmed without losing any ledger data. NULL = never
+  // scrub that class. See src/lib/retention.ts for exactly which columns
+  // each class covers.
+  transactionReasonMaxAgeDays: integer("transaction_reason_max_age_days"),
+  invoiceTextMaxAgeDays: integer("invoice_text_max_age_days"),
+  loanTextMaxAgeDays: integer("loan_text_max_age_days"),
+  issuanceNoteMaxAgeDays: integer("issuance_note_max_age_days"),
+  lastScrubAt: timestamp("last_scrub_at", { withTimezone: true }),
+  lastScrubSummary: jsonb("last_scrub_summary"),
+
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

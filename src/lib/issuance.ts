@@ -8,17 +8,14 @@ import {
   transactions,
   users,
 } from "@/db/schema";
-import { and, eq, gte, ne, sql } from "drizzle-orm";
-import {
-  ISSUANCE_COOLDOWN_DAYS,
-  MAX_ISSUANCE_AMOUNT,
-  MIN_ISSUANCE_AMOUNT,
-} from "./constants";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { MIN_ISSUANCE_AMOUNT } from "./constants";
 import { recordAudit } from "./audit";
 import { notifyEligibleVoters, notifyUser, publishUpdate } from "./notify";
 import { nextTxRef } from "./txref";
 import { isUniqueViolation } from "./db-errors";
 import { effectiveUserStatus, healExpiredSuspensions } from "./status";
+import { istCalendarDaysBetween } from "./datetime";
 
 export class IssuanceError extends Error {
   constructor(message: string) {
@@ -27,23 +24,34 @@ export class IssuanceError extends Error {
   }
 }
 
-/** True if any issuance was executed within the last N days. */
+/**
+ * True when an issuance may NOT be executed right now because the last
+ * executed issuance fell too recently in IST CALENDAR-DAY terms.
+ *
+ * V2.1 semantics (replaces the old rolling N×24h cooldown): Government may
+ * execute an issuance only once per IST calendar day. `cooldownDays` is "how
+ * many IST calendar days must have rolled over since the last execution" —
+ * the default of 1 means simply "not today, IST" (execution is allowed again
+ * as soon as the IST date changes, even if under 24 real hours have passed
+ * near midnight). `cooldownDays <= 0` disables the check entirely.
+ */
 async function hasRecentExecution(
   executor: Pick<typeof db, "select">,
-  days: number,
+  cooldownDays: number,
+  now: Date,
 ): Promise<boolean> {
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const rows = await executor
-    .select({ id: issuanceRequests.id })
+  if (cooldownDays <= 0) return false;
+
+  const [last] = await executor
+    .select({ executedAt: issuanceRequests.executedAt })
     .from(issuanceRequests)
-    .where(
-      and(
-        eq(issuanceRequests.status, "EXECUTED"),
-        gte(issuanceRequests.executedAt, cutoff),
-      ),
-    )
+    .where(eq(issuanceRequests.status, "EXECUTED"))
+    .orderBy(desc(issuanceRequests.executedAt))
     .limit(1);
-  return rows.length > 0;
+
+  if (!last?.executedAt) return false;
+
+  return istCalendarDaysBetween(last.executedAt, now) < cooldownDays;
 }
 
 export async function createIssuanceRequest(params: {
@@ -58,8 +66,21 @@ export async function createIssuanceRequest(params: {
   if (!Number.isInteger(amount) || amount < MIN_ISSUANCE_AMOUNT) {
     throw new IssuanceError("Issuance amount must be a positive whole number.");
   }
-  if (amount > MAX_ISSUANCE_AMOUNT) {
-    throw new IssuanceError(`Issuance amount cannot exceed ${MAX_ISSUANCE_AMOUNT} Aeros.`);
+
+  // The real, Government-configurable cap lives on the government row, not a
+  // hardcoded constant (V2.1). This is a defense-in-depth check at creation
+  // time — `executeIssuance` re-checks it against the live value again,
+  // atomically, at execution time.
+  const [govForLimit] = await db
+    .select({ maxIssuanceAmount: government.maxIssuanceAmount })
+    .from(government)
+    .where(eq(government.id, governmentId))
+    .limit(1);
+  if (!govForLimit) throw new IssuanceError("Government account not found.");
+  if (amount > govForLimit.maxIssuanceAmount) {
+    throw new IssuanceError(
+      `Issuance amount cannot exceed ${govForLimit.maxIssuanceAmount.toLocaleString()} Aeros.`,
+    );
   }
 
   // Make sure elapsed timed suspensions are reflected before we snapshot the
@@ -250,14 +271,33 @@ export async function executeIssuance(params: {
     if (request.status === "EXECUTED") {
       throw new IssuanceError("This issuance request has already been executed.");
     }
-    if (request.amount > MAX_ISSUANCE_AMOUNT) {
-      throw new IssuanceError(`Issuance amount cannot exceed ${MAX_ISSUANCE_AMOUNT} Aeros.`);
+
+    // Lock the government singleton row BEFORE checking the daily cooldown.
+    // This is what makes the check atomic: two near-simultaneous execution
+    // attempts (of the same request or of two different ones) serialize on
+    // this lock, so the second one only proceeds once the first has either
+    // committed its execution (and is therefore visible to the cooldown
+    // query below) or rolled back. Same lock pattern as payments/wallets use
+    // for the government singleton row.
+    const [gov] = await tx
+      .select()
+      .from(government)
+      .where(eq(government.id, governmentId))
+      .for("update");
+    if (!gov) throw new IssuanceError("Government account not found.");
+
+    if (request.amount > gov.maxIssuanceAmount) {
+      throw new IssuanceError(
+        `Issuance amount cannot exceed ${gov.maxIssuanceAmount.toLocaleString()} Aeros.`,
+      );
     }
 
-    const recentlyExecuted = await hasRecentExecution(tx, ISSUANCE_COOLDOWN_DAYS);
+    const now = new Date();
+    const recentlyExecuted = await hasRecentExecution(tx, gov.issuanceCooldownDays, now);
     if (recentlyExecuted) {
       throw new IssuanceError(
-        `Only one Aeros issuance is allowed per ${ISSUANCE_COOLDOWN_DAYS}-day period, and one has already occurred recently.`,
+        `Only one Aeros issuance is allowed per calendar day (India Standard Time). ` +
+          `An issuance was already executed within the last ${gov.issuanceCooldownDays} IST calendar day(s) — try again after the next IST calendar day begins.`,
       );
     }
 
@@ -280,13 +320,6 @@ export async function executeIssuance(params: {
         `Approval requirement has not been met. ${approveCount} of ${eligibleCount} eligible users approved; ${required} approvals are required.`,
       );
     }
-
-    const [gov] = await tx
-      .select()
-      .from(government)
-      .where(eq(government.id, governmentId))
-      .for("update");
-    if (!gov) throw new IssuanceError("Government account not found.");
 
     // This is the ONLY place in the system where total supply increases.
     await tx
@@ -317,7 +350,7 @@ export async function executeIssuance(params: {
 
     await tx
       .update(issuanceRequests)
-      .set({ status: "EXECUTED", executedAt: new Date(), executedTxRef: txRef })
+      .set({ status: "EXECUTED", executedAt: now, executedTxRef: txRef })
       .where(eq(issuanceRequests.id, requestId));
 
     await recordAudit(tx, {

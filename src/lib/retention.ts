@@ -2,12 +2,16 @@ import "server-only";
 import { db } from "@/db/client";
 import {
   auditLogs,
+  invoices,
+  issuanceRequests,
+  loans,
   notifications,
   retentionSettings,
   supportMessages,
+  transactions,
   updates,
 } from "@/db/schema";
-import { and, isNull, lt, sql } from "drizzle-orm";
+import { and, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { recordAudit } from "./audit";
 import type { RetentionSettings } from "@/db/schema";
 
@@ -321,4 +325,279 @@ export async function getStorageCounts() {
     auditLogs: auditCount[0]?.c ?? 0,
     auditLogsArchived: auditArchivedCount[0]?.c ?? 0,
   };
+}
+
+// ---------------------------------------------------------------------------
+// V2.1 — TEXT-FIELD SCRUBBING
+// ---------------------------------------------------------------------------
+//
+// A separate, narrower capability from row deletion above: this NEVER
+// deletes a row and NEVER touches a column that affects a balance, the
+// ledger, or an identity — only specific free-text columns, and only once
+// the row is older than the configured age. Every column it can touch is
+// listed explicitly below; anything not listed is untouched by design.
+//
+//   transactions        reason                                        (only)
+//   invoices             description, note                            (only)
+//   loans                purpose, rejection_reason,
+//                        default_reason, restructure_note              (only)
+//   issuance_requests    note                                          (only)
+//
+// Idempotent: every scrub is a conditional UPDATE guarded on the column not
+// already being cleared, so running it twice (or on a schedule) is always
+// safe and the second run reports zero newly-changed rows.
+
+/** Marker left in place of a scrubbed free-text field, so it stays visibly
+ * distinguishable from a field that legitimately was never filled in. */
+export const TEXT_SCRUB_MARKER = "[cleared]";
+
+function scrubCutoff(maxAgeDays: number): Date {
+  return new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
+}
+
+/** True for a nullable text column that still holds real, unscrubbed content. */
+function holdsUnscrubbedText(column: Parameters<typeof isNotNull>[0]) {
+  return and(isNotNull(column), ne(column, TEXT_SCRUB_MARKER));
+}
+
+async function scrubTransactionReasons(maxAgeDays: number): Promise<number> {
+  const cutoff = scrubCutoff(maxAgeDays);
+  const rows = await db
+    .update(transactions)
+    .set({ reason: TEXT_SCRUB_MARKER })
+    .where(and(lt(transactions.createdAt, cutoff), holdsUnscrubbedText(transactions.reason)))
+    .returning({ id: transactions.id });
+  return rows.length;
+}
+
+async function scrubInvoiceText(maxAgeDays: number): Promise<number> {
+  const cutoff = scrubCutoff(maxAgeDays);
+  const rows = await db
+    .update(invoices)
+    .set({
+      description: sql`CASE WHEN ${invoices.description} IS NOT NULL AND ${invoices.description} <> ${TEXT_SCRUB_MARKER} THEN ${TEXT_SCRUB_MARKER} ELSE ${invoices.description} END`,
+      note: sql`CASE WHEN ${invoices.note} IS NOT NULL AND ${invoices.note} <> ${TEXT_SCRUB_MARKER} THEN ${TEXT_SCRUB_MARKER} ELSE ${invoices.note} END`,
+    })
+    .where(
+      and(
+        lt(invoices.createdAt, cutoff),
+        or(holdsUnscrubbedText(invoices.description), holdsUnscrubbedText(invoices.note)),
+      ),
+    )
+    .returning({ id: invoices.id });
+  return rows.length;
+}
+
+async function scrubLoanText(maxAgeDays: number): Promise<number> {
+  const cutoff = scrubCutoff(maxAgeDays);
+  // `purpose` is NOT NULL, so it is compared directly rather than through
+  // `holdsUnscrubbedText` (which also accepts NULL as "nothing to do").
+  const rows = await db
+    .update(loans)
+    .set({
+      purpose: sql`CASE WHEN ${loans.purpose} <> ${TEXT_SCRUB_MARKER} THEN ${TEXT_SCRUB_MARKER} ELSE ${loans.purpose} END`,
+      rejectionReason: sql`CASE WHEN ${loans.rejectionReason} IS NOT NULL AND ${loans.rejectionReason} <> ${TEXT_SCRUB_MARKER} THEN ${TEXT_SCRUB_MARKER} ELSE ${loans.rejectionReason} END`,
+      defaultReason: sql`CASE WHEN ${loans.defaultReason} IS NOT NULL AND ${loans.defaultReason} <> ${TEXT_SCRUB_MARKER} THEN ${TEXT_SCRUB_MARKER} ELSE ${loans.defaultReason} END`,
+      restructureNote: sql`CASE WHEN ${loans.restructureNote} IS NOT NULL AND ${loans.restructureNote} <> ${TEXT_SCRUB_MARKER} THEN ${TEXT_SCRUB_MARKER} ELSE ${loans.restructureNote} END`,
+    })
+    .where(
+      and(
+        lt(loans.createdAt, cutoff),
+        or(
+          ne(loans.purpose, TEXT_SCRUB_MARKER),
+          holdsUnscrubbedText(loans.rejectionReason),
+          holdsUnscrubbedText(loans.defaultReason),
+          holdsUnscrubbedText(loans.restructureNote),
+        ),
+      ),
+    )
+    .returning({ id: loans.id });
+  return rows.length;
+}
+
+async function scrubIssuanceNotes(maxAgeDays: number): Promise<number> {
+  const cutoff = scrubCutoff(maxAgeDays);
+  const rows = await db
+    .update(issuanceRequests)
+    .set({ note: TEXT_SCRUB_MARKER })
+    .where(and(lt(issuanceRequests.createdAt, cutoff), holdsUnscrubbedText(issuanceRequests.note)))
+    .returning({ id: issuanceRequests.id });
+  return rows.length;
+}
+
+export type TextScrubPreview = {
+  transactions: { maxAgeDays: number | null; eligible: number };
+  invoices: { maxAgeDays: number | null; eligible: number };
+  loans: { maxAgeDays: number | null; eligible: number };
+  issuanceNotes: { maxAgeDays: number | null; eligible: number };
+  lastScrubAt: Date | null;
+};
+
+/** How many rows each configured scrub policy would touch right now. */
+export async function previewTextScrub(): Promise<TextScrubPreview> {
+  const settings = await getRetentionSettings();
+
+  const [txCount, invCount, loanCount, issCount] = await Promise.all([
+    settings.transactionReasonMaxAgeDays === null
+      ? Promise.resolve(0)
+      : db
+          .select({ c: sql<number>`count(*)::int` })
+          .from(transactions)
+          .where(
+            and(
+              lt(transactions.createdAt, scrubCutoff(settings.transactionReasonMaxAgeDays)),
+              holdsUnscrubbedText(transactions.reason),
+            ),
+          )
+          .then((r) => r[0]?.c ?? 0),
+    settings.invoiceTextMaxAgeDays === null
+      ? Promise.resolve(0)
+      : db
+          .select({ c: sql<number>`count(*)::int` })
+          .from(invoices)
+          .where(
+            and(
+              lt(invoices.createdAt, scrubCutoff(settings.invoiceTextMaxAgeDays)),
+              or(holdsUnscrubbedText(invoices.description), holdsUnscrubbedText(invoices.note)),
+            ),
+          )
+          .then((r) => r[0]?.c ?? 0),
+    settings.loanTextMaxAgeDays === null
+      ? Promise.resolve(0)
+      : db
+          .select({ c: sql<number>`count(*)::int` })
+          .from(loans)
+          .where(
+            and(
+              lt(loans.createdAt, scrubCutoff(settings.loanTextMaxAgeDays)),
+              or(
+                ne(loans.purpose, TEXT_SCRUB_MARKER),
+                holdsUnscrubbedText(loans.rejectionReason),
+                holdsUnscrubbedText(loans.defaultReason),
+                holdsUnscrubbedText(loans.restructureNote),
+              ),
+            ),
+          )
+          .then((r) => r[0]?.c ?? 0),
+    settings.issuanceNoteMaxAgeDays === null
+      ? Promise.resolve(0)
+      : db
+          .select({ c: sql<number>`count(*)::int` })
+          .from(issuanceRequests)
+          .where(
+            and(
+              lt(issuanceRequests.createdAt, scrubCutoff(settings.issuanceNoteMaxAgeDays)),
+              holdsUnscrubbedText(issuanceRequests.note),
+            ),
+          )
+          .then((r) => r[0]?.c ?? 0),
+  ]);
+
+  return {
+    transactions: { maxAgeDays: settings.transactionReasonMaxAgeDays, eligible: txCount },
+    invoices: { maxAgeDays: settings.invoiceTextMaxAgeDays, eligible: invCount },
+    loans: { maxAgeDays: settings.loanTextMaxAgeDays, eligible: loanCount },
+    issuanceNotes: { maxAgeDays: settings.issuanceNoteMaxAgeDays, eligible: issCount },
+    lastScrubAt: settings.lastScrubAt,
+  };
+}
+
+export async function updateTextScrubSettings(params: {
+  transactionReasonMaxAgeDays: number | null;
+  invoiceTextMaxAgeDays: number | null;
+  loanTextMaxAgeDays: number | null;
+  issuanceNoteMaxAgeDays: number | null;
+  governmentId: string;
+  governmentUsername: string;
+}): Promise<RetentionSettings> {
+  const current = await getRetentionSettings();
+
+  const [updated] = await db
+    .update(retentionSettings)
+    .set({
+      transactionReasonMaxAgeDays: params.transactionReasonMaxAgeDays,
+      invoiceTextMaxAgeDays: params.invoiceTextMaxAgeDays,
+      loanTextMaxAgeDays: params.loanTextMaxAgeDays,
+      issuanceNoteMaxAgeDays: params.issuanceNoteMaxAgeDays,
+      updatedAt: new Date(),
+    })
+    .returning();
+
+  await recordAudit(db, {
+    action: "TEXT_SCRUB_SETTINGS_CHANGED",
+    actorType: "GOVERNMENT",
+    actorId: params.governmentId,
+    actorLabel: params.governmentUsername,
+    previousValue: JSON.stringify({
+      transactionReason: current.transactionReasonMaxAgeDays,
+      invoiceText: current.invoiceTextMaxAgeDays,
+      loanText: current.loanTextMaxAgeDays,
+      issuanceNote: current.issuanceNoteMaxAgeDays,
+    }),
+    newValue: JSON.stringify({
+      transactionReason: updated.transactionReasonMaxAgeDays,
+      invoiceText: updated.invoiceTextMaxAgeDays,
+      loanText: updated.loanTextMaxAgeDays,
+      issuanceNote: updated.issuanceNoteMaxAgeDays,
+    }),
+  });
+
+  return updated;
+}
+
+export type TextScrubResult = {
+  transactionsScrubbed: number;
+  invoicesScrubbed: number;
+  loansScrubbed: number;
+  issuanceNotesScrubbed: number;
+};
+
+/**
+ * Runs every configured scrub class once. A class with no configured max age
+ * (`null`) is skipped entirely — nothing is scrubbed unless the Government
+ * has explicitly set an age for that class. Safe to call repeatedly: rows
+ * already scrubbed are never counted or touched again (see the `holdsUnscrubbedText`
+ * guard on every UPDATE above).
+ */
+export async function runTextScrub(params: {
+  governmentId: string;
+  governmentUsername: string;
+}): Promise<TextScrubResult> {
+  const settings = await getRetentionSettings();
+
+  const transactionsScrubbed =
+    settings.transactionReasonMaxAgeDays !== null
+      ? await scrubTransactionReasons(settings.transactionReasonMaxAgeDays)
+      : 0;
+  const invoicesScrubbed =
+    settings.invoiceTextMaxAgeDays !== null
+      ? await scrubInvoiceText(settings.invoiceTextMaxAgeDays)
+      : 0;
+  const loansScrubbed =
+    settings.loanTextMaxAgeDays !== null ? await scrubLoanText(settings.loanTextMaxAgeDays) : 0;
+  const issuanceNotesScrubbed =
+    settings.issuanceNoteMaxAgeDays !== null
+      ? await scrubIssuanceNotes(settings.issuanceNoteMaxAgeDays)
+      : 0;
+
+  const result: TextScrubResult = {
+    transactionsScrubbed,
+    invoicesScrubbed,
+    loansScrubbed,
+    issuanceNotesScrubbed,
+  };
+
+  await db
+    .update(retentionSettings)
+    .set({ lastScrubAt: new Date(), lastScrubSummary: result });
+
+  await recordAudit(db, {
+    action: "TEXT_SCRUB_RUN",
+    actorType: "GOVERNMENT",
+    actorId: params.governmentId,
+    actorLabel: params.governmentUsername,
+    metadata: result,
+  });
+
+  return result;
 }

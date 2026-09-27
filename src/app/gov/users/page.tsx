@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getAllUsers } from "@/lib/queries";
 import { StatusBadge } from "@/components/status-badge";
 import { CURRENCY_NAME } from "@/lib/constants";
+import { formatDate } from "@/lib/datetime";
 
 export default async function GovUsersPage() {
   const allUsers = await getAllUsers();
@@ -36,7 +37,7 @@ export default async function GovUsersPage() {
                   <StatusBadge status={u.effectiveStatus} />
                 </td>
                 <td className="px-4 py-3 text-muted">
-                  {new Date(u.createdAt).toLocaleDateString()}
+                  {formatDate(u.createdAt)}
                 </td>
               </tr>
             ))}

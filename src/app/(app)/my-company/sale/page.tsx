@@ -14,6 +14,7 @@ import {
 } from "@/components/forms/company-forms";
 import { SaleStatusBadge } from "@/components/status-badge";
 import { CURRENCY_NAME } from "@/lib/constants";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 export default async function CompanySalePage() {
   const ctx = await getActingContext();
@@ -72,7 +73,7 @@ export default async function CompanySalePage() {
                 <p className="mt-3 rounded-md bg-surface p-3 text-sm">{offer.message}</p>
               )}
               <p className="mt-2 text-xs text-muted">
-                Received {new Date(offer.createdAt).toLocaleString()}
+                Received {formatDateTime(offer.createdAt)}
               </p>
             </div>
           ))}
@@ -86,7 +87,7 @@ export default async function CompanySalePage() {
               <h2 className="font-medium">Currently listed for sale</h2>
               <p className="mt-1 text-sm text-muted">&ldquo;{listing.reason}&rdquo;</p>
               <p className="mt-2 text-xs text-muted">
-                Listed {new Date(listing.createdAt).toLocaleString()}
+                Listed {formatDateTime(listing.createdAt)}
               </p>
             </div>
             <div className="text-right">
@@ -137,7 +138,7 @@ export default async function CompanySalePage() {
                   </p>
                   <p className="text-xs text-muted">
                     {offer.offerorType === "GOVERNMENT" ? "Government" : "User"} ·{" "}
-                    {new Date(offer.createdAt).toLocaleDateString()}
+                    {formatDate(offer.createdAt)}
                   </p>
                 </div>
                 <SaleStatusBadge status={offer.status} />
@@ -158,7 +159,7 @@ export default async function CompanySalePage() {
                 </p>
                 <p className="text-xs text-muted">
                   {record.saleType.replace(/_/g, " ").toLowerCase()} ·{" "}
-                  {new Date(record.createdAt).toLocaleString()} · Ref {record.txRef}
+                  {formatDateTime(record.createdAt)} · Ref {record.txRef}
                 </p>
               </div>
             ))}

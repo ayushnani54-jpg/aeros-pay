@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getRecentAuditLogs } from "@/lib/queries";
+import { formatDateTime } from "@/lib/datetime";
 
 /**
  * Audit log. Entries are never deleted — the archive view simply reveals
@@ -85,7 +86,7 @@ export default async function GovAuditPage({ searchParams }: PageProps<"/gov/aud
                   </td>
                   <td className="px-4 py-3 text-xs text-muted">{log.reason ?? "—"}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-xs text-muted">
-                    {new Date(log.createdAt).toLocaleString()}
+                    {formatDateTime(log.createdAt)}
                   </td>
                 </tr>
               ))}

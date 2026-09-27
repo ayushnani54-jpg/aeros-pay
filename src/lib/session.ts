@@ -92,7 +92,13 @@ export async function createUserSession(user: {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: USER_SESSION_MAX_AGE_SECONDS,
+    // Intentionally NOT a persistent cookie: no `maxAge`/`expires` means the
+    // browser treats this as a session cookie and discards it when the
+    // browser itself is fully closed (not just the tab), so reopening the
+    // browser requires logging in again. The JWT's own `exp` claim (set via
+    // USER_SESSION_MAX_AGE_SECONDS in signSession above) remains as a
+    // server-verified backstop for how long the token is honored even if a
+    // client ever retains the cookie longer than intended.
   });
 }
 
@@ -124,7 +130,9 @@ export async function createGovSession(gov: { id: string; username: string }) {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: GOV_SESSION_MAX_AGE_SECONDS,
+    // Session cookie (no maxAge/expires) — see comment in createUserSession.
+    // The JWT `exp` claim (GOV_SESSION_MAX_AGE_SECONDS) remains as a
+    // server-verified backstop.
   });
 }
 
@@ -161,7 +169,8 @@ export async function setCompanyContext(companyId: string | null) {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: USER_SESSION_MAX_AGE_SECONDS,
+    // Session cookie, like the auth cookies: a wallet-context hint should
+    // never outlive the browser session that chose it.
   });
 }
 

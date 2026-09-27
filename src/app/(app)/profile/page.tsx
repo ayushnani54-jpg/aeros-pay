@@ -7,6 +7,7 @@ import { CompanyStatusBadge } from "@/components/status-badge";
 import { getOwnedCompanies } from "@/lib/auth";
 import { effectiveUserStatus, formatSuspensionRemaining } from "@/lib/status";
 import { CURRENCY_NAME } from "@/lib/constants";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 export default async function ProfilePage() {
   const ctx = await getActingContext();
@@ -33,12 +34,12 @@ export default async function ProfilePage() {
             <StatusBadge status={status} />
           </dd>
           <dt className="text-muted">Registered</dt>
-          <dd>{new Date(user.createdAt).toLocaleDateString()}</dd>
+          <dd>{formatDate(user.createdAt)}</dd>
         </dl>
         {status === "SUSPENDED" && user.suspendedUntil && (
           <p className="mt-3 text-sm text-muted">
             Suspension ends in {formatSuspensionRemaining(user.suspendedUntil)} (
-            {user.suspendedUntil.toLocaleString()}).
+            {formatDateTime(user.suspendedUntil)}).
           </p>
         )}
         <p className="mt-3 text-xs text-muted">

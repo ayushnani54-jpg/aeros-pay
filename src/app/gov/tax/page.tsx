@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { getAllCompaniesForGovernment, getGovernmentSingleton, getRecentAuditLogs } from "@/lib/queries";
 import { TaxRateForm } from "@/components/forms/tax-rate-form";
-import { CompanyDefaultTaxForm } from "@/components/forms/gov-forms";
+import { CompanyDefaultTaxForm, EconomyPolicyForm } from "@/components/forms/gov-forms";
 import { formatTaxRateBp } from "@/lib/tax";
+import { formatDateTime } from "@/lib/datetime";
 import { CURRENCY_NAME } from "@/lib/constants";
 
 export default async function GovTaxPage() {
@@ -21,9 +22,12 @@ export default async function GovTaxPage() {
   }
 
   const taxHistory = auditLogs.filter((log) =>
-    ["TAX_RATE_CHANGED", "COMPANY_TAX_DEFAULT_CHANGED", "COMPANY_TAX_RATE_CHANGED"].includes(
-      log.action,
-    ),
+    [
+      "TAX_RATE_CHANGED",
+      "COMPANY_TAX_DEFAULT_CHANGED",
+      "COMPANY_TAX_RATE_CHANGED",
+      "ECONOMY_POLICY_CHANGED",
+    ].includes(log.action),
   );
 
   const withOverride = companies.filter((c) => c.company.taxRateBp !== null);
@@ -55,6 +59,19 @@ export default async function GovTaxPage() {
           </p>
           <CompanyDefaultTaxForm currentPercent={gov.companyTaxRateBp / 100} />
         </div>
+      </section>
+
+      <section className="card p-5">
+        <h2 className="mb-1 font-medium">Economy policy</h2>
+        <p className="mb-4 text-sm text-muted">
+          Company approval funding, the per-execution issuance cap, and the issuance cooldown.
+          These used to be fixed constants — now live and editable here.
+        </p>
+        <EconomyPolicyForm
+          companyApprovalFundingAmount={gov.companyApprovalFundingAmount}
+          maxIssuanceAmount={gov.maxIssuanceAmount}
+          issuanceCooldownDays={gov.issuanceCooldownDays}
+        />
       </section>
 
       <section className="card p-5">
@@ -115,7 +132,7 @@ export default async function GovTaxPage() {
                 <p className="font-medium">{log.action.replace(/_/g, " ")}</p>
                 <p className="text-xs text-muted">
                   {log.previousValue ?? "—"} → {log.newValue ?? "—"} · {log.actorLabel} ·{" "}
-                  {new Date(log.createdAt).toLocaleString()}
+                  {formatDateTime(log.createdAt)}
                 </p>
               </div>
             ))}

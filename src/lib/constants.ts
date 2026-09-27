@@ -14,9 +14,17 @@ export const DEFAULT_TAX_RATE_BP = 500; // 5.00%
 export const MAX_TAX_RATE_BP = 10000; // 100%
 export const MIN_TAX_RATE_BP = 0;
 
-export const MAX_ISSUANCE_AMOUNT = 5_000;
+/** V2.1: no longer the runtime source of truth. The live value is
+ * `government.max_issuance_amount`, editable from the Government panel
+ * (src/app/gov/tax). This constant only seeds that column's default (see
+ * drizzle/0004_configurable_policy.sql) and is kept here for reference. */
+export const MAX_ISSUANCE_AMOUNT = 10_000;
 export const MIN_ISSUANCE_AMOUNT = 1;
-export const ISSUANCE_COOLDOWN_DAYS = 7;
+/** V2.1: no longer the runtime source of truth. The live value is
+ * `government.issuance_cooldown_days`, editable from the Government panel
+ * (src/app/gov/tax). This constant only seeds that column's default (see
+ * drizzle/0004_configurable_policy.sql) and is kept here for reference. */
+export const ISSUANCE_COOLDOWN_DAYS = 1;
 
 export const REGISTRATION_CODE_LENGTH = 4;
 
@@ -43,8 +51,13 @@ export const GOV_SESSION_MAX_AGE_SECONDS = 60 * 60 * 8; // 8 hours (tighter for 
 // ---------------------------------------------------------------------------
 
 /** Aeros the Government funds a company with on approval (from the treasury —
- * this is a transfer, never newly created supply). */
-export const COMPANY_APPROVAL_FUNDING_AMOUNT = 5_000;
+ * this is a transfer, never newly created supply).
+ *
+ * V2.1: this is no longer the runtime source of truth. The live value is
+ * `government.company_approval_funding_amount`, editable from the Government
+ * panel (src/app/gov/tax). This constant only seeds that column's default
+ * (see drizzle/0004_configurable_policy.sql) and is kept here for reference. */
+export const COMPANY_APPROVAL_FUNDING_AMOUNT = 3_000;
 
 /** Default tax rate applied to company transactions when the Government has
  * not set a company-specific rate. Configurable from the Government panel. */

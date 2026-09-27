@@ -1,6 +1,6 @@
 {
-  "id": "2bbc7cbf-d7c3-45d0-9c21-edad3d828868",
-  "prevId": "72b2e736-aba9-4ba7-ab5a-6fa49b5e66a8",
+  "id": "a05031f1-6e20-45d6-855e-d7ee56d295bb",
+  "prevId": "2bbc7cbf-d7c3-45d0-9c21-edad3d828868",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1149,6 +1149,45 @@
           "primaryKey": false,
           "notNull": false
         },
+        "company_approval_funding_amount": {
+          "name": "company_approval_funding_amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 3000
+        },
+        "company_approval_funding_updated_at": {
+          "name": "company_approval_funding_updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "max_issuance_amount": {
+          "name": "max_issuance_amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 10000
+        },
+        "max_issuance_amount_updated_at": {
+          "name": "max_issuance_amount_updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "issuance_cooldown_days": {
+          "name": "issuance_cooldown_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "issuance_cooldown_updated_at": {
+          "name": "issuance_cooldown_updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1178,6 +1217,18 @@
         "government_tax_rate_bounds": {
           "name": "government_tax_rate_bounds",
           "value": "\"government\".\"tax_rate_bp\" >= 0 AND \"government\".\"tax_rate_bp\" <= 10000"
+        },
+        "government_company_approval_funding_bounds": {
+          "name": "government_company_approval_funding_bounds",
+          "value": "\"government\".\"company_approval_funding_amount\" >= 0 AND \"government\".\"company_approval_funding_amount\" <= 1000000"
+        },
+        "government_max_issuance_amount_bounds": {
+          "name": "government_max_issuance_amount_bounds",
+          "value": "\"government\".\"max_issuance_amount\" >= 1 AND \"government\".\"max_issuance_amount\" <= 1000000"
+        },
+        "government_issuance_cooldown_bounds": {
+          "name": "government_issuance_cooldown_bounds",
+          "value": "\"government\".\"issuance_cooldown_days\" >= 0 AND \"government\".\"issuance_cooldown_days\" <= 365"
         }
       },
       "isRLSEnabled": false
@@ -1725,7 +1776,7 @@
       "checkConstraints": {
         "issuance_amount_bounds": {
           "name": "issuance_amount_bounds",
-          "value": "\"issuance_requests\".\"amount\" >= 1 AND \"issuance_requests\".\"amount\" <= 5000"
+          "value": "\"issuance_requests\".\"amount\" >= 1 AND \"issuance_requests\".\"amount\" <= 1000000"
         }
       },
       "isRLSEnabled": false
@@ -2691,6 +2742,42 @@
         },
         "last_cleanup_summary": {
           "name": "last_cleanup_summary",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "transaction_reason_max_age_days": {
+          "name": "transaction_reason_max_age_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "invoice_text_max_age_days": {
+          "name": "invoice_text_max_age_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "loan_text_max_age_days": {
+          "name": "loan_text_max_age_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "issuance_note_max_age_days": {
+          "name": "issuance_note_max_age_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_scrub_at": {
+          "name": "last_scrub_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_scrub_summary": {
+          "name": "last_scrub_summary",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false
