@@ -276,6 +276,24 @@ async function main() {
   await db.execute(sql`DELETE FROM company_sale_dismissals`);
   await db.execute(sql`DELETE FROM company_sale_offers`);
   await db.execute(sql`DELETE FROM company_sale_listings`);
+  // V3 marketplace children, deleted before the invoices and companies they
+  // reference. Same blast radius as the lines below it: this teardown already
+  // wipes every invoice and every company in the database, so it has to wipe
+  // the V3 rows that point at them too or the FKs refuse the delete. None of
+  // these tables holds Aeros, so removing them cannot disturb the supply
+  // invariant. (The application itself never deletes any of this.)
+  // `invoices` and `marketplace_orders` reference each other, so one side of
+  // the cycle has to be released before either table can be emptied.
+  await db.execute(sql`UPDATE invoices SET source_order_id = NULL`);
+  await db.execute(sql`UPDATE marketplace_contracts SET invoice_id = NULL`);
+  await db.execute(sql`DELETE FROM marketplace_order_ratings`);
+  await db.execute(sql`DELETE FROM marketplace_orders`);
+  await db.execute(sql`DELETE FROM promotion_campaigns`);
+  await db.execute(sql`DELETE FROM marketplace_offers`);
+  await db.execute(sql`DELETE FROM marketplace_contract_applications`);
+  await db.execute(sql`DELETE FROM marketplace_contracts`);
+  await db.execute(sql`DELETE FROM marketplace_wanted_responses`);
+  await db.execute(sql`DELETE FROM marketplace_wanted_requests`);
   await db.execute(sql`DELETE FROM invoices`);
   await db.execute(sql`UPDATE transactions SET receiver_id = NULL WHERE receiver_type = 'COMPANY'`);
   await db.execute(sql`UPDATE transactions SET sender_id = NULL WHERE sender_type = 'COMPANY'`);

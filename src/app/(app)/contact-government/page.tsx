@@ -6,6 +6,7 @@ import {
 } from "@/lib/support";
 import { SupportMessageForm } from "@/components/forms/support-forms";
 import { SupportStatusBadge } from "@/components/status-badge";
+import { formatDateTime } from "@/lib/datetime";
 
 /**
  * The user's private conversation with the Government. There is exactly one
@@ -51,7 +52,7 @@ export default async function ContactGovernmentPage() {
                     {fromGov ? "Government" : "You"}
                   </p>
                   <p className="text-xs text-muted">
-                    {new Date(message.createdAt).toLocaleString()}
+                    {formatDateTime(message.createdAt)}
                   </p>
                 </div>
                 <p className="mt-2 whitespace-pre-line text-sm">{message.body}</p>

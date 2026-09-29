@@ -88,8 +88,28 @@ export function formatTaxRateBp(taxRateBp: number): string {
 
 // ---------------------------------------------------------------------------
 // Which rate applies to which transfer (spec §22)
+//
+// V3 NOTE — READ BEFORE CALLING `resolveTaxRateBp` DIRECTLY
+// --------------------------------------------------------
+// These are still the rules, and they are still the ONLY implementation of
+// them; V3 did not fork this function. What changed is who calls it: the live
+// decision now goes through `src/lib/taxmatrix.ts`, which first consults the
+// Government-configurable tax matrix and falls back to THIS function when the
+// matrix has nothing configured for the combination in question (the default,
+// since the matrix ships empty).
+//
+// So: server code that is about to move Aeros calls
+// `resolveTaxDecision`/`resolveEffectiveTaxRateBp` in taxmatrix.ts, not this.
+// This function stays exported because it is that module's fallback and
+// because it is a pure function worth unit-testing on its own.
 // ---------------------------------------------------------------------------
 
+/**
+ * The rate inputs the V2 rules need. Not to be confused with a V3
+ * "transaction context" (DIRECT_TRANSFER, INVOICE_PAYMENT, ...), which is the
+ * third axis of the tax matrix and lives in src/lib/taxmatrix.ts as
+ * `TaxTransactionContext`.
+ */
 export type TaxContext = {
   /** Global personal rate from the government row. */
   personalRateBp: number;

@@ -1,27 +1,29 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getCurrentUser } from "@/lib/auth";
-import { getInvoiceById } from "@/lib/invoices";
-import { InvoiceStatusBadge } from "@/components/status-badge";
+import { getActingContext } from "@/lib/auth";
+import { getInvoiceById, invoiceViewerRole } from "@/lib/invoices";
 import { PayInvoiceButton } from "@/components/forms/invoice-forms";
+import { InvoiceSummary } from "@/components/invoice-summary";
 import { CURRENCY_NAME } from "@/lib/constants";
-import { formatTaxRateBp } from "@/lib/tax";
 
 export default async function InvoiceDetailPage({ params }: PageProps<"/invoices/[id]">) {
-  const user = await getCurrentUser();
-  if (!user) return null;
+  const ctx = await getActingContext();
+  if (!ctx) return null;
 
   const { id } = await params;
   const row = await getInvoiceById(id);
   if (!row) notFound();
 
-  const { invoice, company } = row;
+  const { invoice, company, recipient } = row;
 
-  // An invoice is private to its buyer and the issuing company's owner.
-  const canView = invoice.buyerUserId === user.id || company.ownerUserId === user.id;
-  if (!canView) notFound();
+  const role = invoiceViewerRole(row, {
+    userId: ctx.user.id,
+    wallet: ctx.wallet,
+    ownedCompanyIds: ctx.availableCompanies.map((c) => c.id),
+  });
+  if (!role.canView) notFound();
 
-  const isBuyer = invoice.buyerUserId === user.id;
+  const payable = invoice.status === "PENDING";
 
   return (
     <div className="space-y-5">
@@ -30,89 +32,73 @@ export default async function InvoiceDetailPage({ params }: PageProps<"/invoices
       </Link>
 
       <div className="card p-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">{invoice.itemName}</h1>
-            <p className="mt-1 text-sm text-muted">
-              {company.name} (@{company.username})
-            </p>
-          </div>
-          <div className="text-right">
-            <InvoiceStatusBadge status={invoice.status} />
-            <p className="mt-1 font-mono text-xs text-muted">{invoice.invoiceNumber}</p>
-          </div>
+        <InvoiceSummary invoice={invoice} company={company} recipient={recipient} />
+
+        <div className="mt-5">
+          <Link
+            href={`/invoices/${invoice.id}/print`}
+            target="_blank"
+            className="btn btn-secondary text-sm"
+          >
+            Print / Save as PDF
+          </Link>
         </div>
 
-        {invoice.description && (
-          <p className="mt-4 whitespace-pre-line text-sm text-muted">{invoice.description}</p>
-        )}
-
-        <dl className="mt-5 space-y-1 text-sm">
-          <Row label="Quantity" value={invoice.quantity.toLocaleString()} />
-          <Row
-            label="Unit price"
-            value={`${invoice.unitPrice.toLocaleString()} ${CURRENCY_NAME}`}
-          />
-          <Row
-            label="Subtotal"
-            value={`${invoice.subtotal.toLocaleString()} ${CURRENCY_NAME}`}
-          />
-          <Row
-            label={`Tax (${formatTaxRateBp(invoice.taxRateBp)})`}
-            value={`${invoice.taxAmount.toLocaleString()} ${CURRENCY_NAME}`}
-          />
-          <div className="flex justify-between border-t border-border pt-2 text-base font-semibold">
-            <dt>Total payable</dt>
-            <dd>
-              {invoice.total.toLocaleString()} {CURRENCY_NAME}
-            </dd>
-          </div>
-        </dl>
-
-        <p className="mt-3 text-xs text-muted">
-          Tax is added on top of the quoted price, so {company.name} receives the full{" "}
-          {invoice.subtotal.toLocaleString()} {CURRENCY_NAME} and the tax goes to the Government.
-        </p>
-
-        <dl className="mt-5 space-y-1 text-xs text-muted">
-          <Row label="Issued" value={new Date(invoice.createdAt).toLocaleString()} />
-          {invoice.dueAt && (
-            <Row label="Due" value={new Date(invoice.dueAt).toLocaleString()} />
-          )}
-          {invoice.paidAt && (
-            <Row label="Paid" value={new Date(invoice.paidAt).toLocaleString()} />
-          )}
-          {invoice.paidTxRef && <Row label="Transaction" value={invoice.paidTxRef} />}
-        </dl>
-
-        {invoice.note && (
-          <p className="mt-4 rounded-md bg-surface p-3 text-sm">{invoice.note}</p>
-        )}
-
-        {isBuyer && invoice.status === "PENDING" && (
+        {role.isPayer && payable && (
           <div className="mt-6">
             <PayInvoiceButton
               invoiceId={invoice.id}
               total={invoice.total}
-              companyName={company.name}
-              canAfford={user.balance >= invoice.total}
+              issuerName={company.name}
+              payerLabel={ctx.company ? `${ctx.company.name} (${ctx.handle})` : "your personal wallet"}
+              canAfford={ctx.balance >= invoice.total}
             />
           </div>
         )}
 
-        {isBuyer && invoice.status === "PAID" && (
-          <p className="mt-6 text-sm text-success">This invoice has been paid.</p>
+        {role.isRecipientOwnerInWrongContext && payable && (
+          <p className="mt-6 rounded-md bg-surface p-3 text-sm text-muted">
+            This invoice is addressed to {recipient.label} (@{recipient.username}). Switch to that
+            company wallet from your dashboard to pay it — a company&apos;s bills are always paid
+            from the company wallet.
+          </p>
+        )}
+
+        {invoice.status === "PAID" && (
+          <p className="mt-6 text-sm text-success" data-testid="invoice-paid">
+            This invoice has been paid
+            {invoice.paidTxRef ? (
+              <>
+                {" ("}
+                <Link href="/transactions" className="underline">
+                  ref {invoice.paidTxRef}
+                </Link>
+                {")"}
+              </>
+            ) : null}
+            .
+          </p>
+        )}
+
+        {invoice.status === "CANCELLED" && (
+          <p className="mt-6 text-sm text-muted">This invoice was cancelled.</p>
+        )}
+
+        {invoice.status === "EXPIRED" && (
+          <p className="mt-6 text-sm text-muted">
+            This invoice passed its due date and can no longer be paid. Ask {company.name} to issue
+            a new one.
+          </p>
+        )}
+
+        {role.isIssuer && !role.isPayer && (
+          <p className="mt-6 text-xs text-muted">
+            You are viewing this as the issuer. When it is paid, the{" "}
+            {invoice.subtotal.toLocaleString()} {CURRENCY_NAME} lands in the {company.name} company
+            wallet.
+          </p>
         )}
       </div>
-    </div>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between">
-      <dt className="text-muted">{label}</dt>
-      <dd>{value}</dd>
     </div>
   );
 }

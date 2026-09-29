@@ -1,10 +1,18 @@
 "use server";
 
 import { requireUser, requireActingContext } from "@/lib/auth";
-import { payByUsername, PaymentError } from "@/lib/payments";
+import {
+  payByUsername,
+  PaymentError,
+  quotePayment,
+  resolvePayee,
+  type ResolvedPayee,
+} from "@/lib/payments";
 import {
   changePasswordSchema,
+  paymentQuoteSchema,
   paySchema,
+  resolvePayeeSchema,
   switchContextSchema,
   updateDisplayNameSchema,
 } from "@/lib/validators";
@@ -18,6 +26,12 @@ import { hashSecret, verifySecret } from "@/lib/password";
 import { markNotificationsRead } from "@/lib/notify";
 import { recordAudit } from "@/lib/audit";
 import { canUserSend } from "@/lib/status";
+import {
+  consumeRateLimit,
+  financialKey,
+  rateLimitMessage,
+  FINANCIAL_RULE,
+} from "@/lib/ratelimit";
 import type { ActionResult } from "./auth";
 
 export type PaymentData = {
@@ -56,6 +70,11 @@ export async function payAction(
           : "Your account is suspended and cannot send Aeros right now.",
     };
   }
+
+  // Keyed on the acting wallet from the verified session, so it counts real
+  // spending attempts rather than anything the client could rename.
+  const rl = consumeRateLimit(financialKey("pay", ctx.wallet), FINANCIAL_RULE);
+  if (!rl.allowed) return { ok: false, error: rateLimitMessage(rl) };
 
   const parsed = paySchema.safeParse({
     recipientUsername: formData.get("recipientUsername"),
@@ -97,6 +116,86 @@ export async function payAction(
   } catch (e) {
     if (e instanceof PaymentError) return { ok: false, error: e.message };
     return { ok: false, error: "Payment could not be completed." };
+  }
+}
+
+/**
+ * Resolves a typed-in username to the entity that would be paid (spec §10).
+ *
+ * The payer types a handle; the SERVER decides whether that is a person, a
+ * company or the Government and hands back only the identity, so the payer can
+ * confirm who they are about to pay before any amount is entered. It returns no
+ * balance — a payer never learns what anyone else holds — and it accepts no
+ * wallet id, so a client cannot nominate a wallet.
+ */
+export async function resolvePayeeAction(input: {
+  username: string;
+  toGovernment?: boolean;
+}): Promise<ActionResult<ResolvedPayee>> {
+  try {
+    await requireActingContext();
+  } catch {
+    return { ok: false, error: "Your session has expired. Please sign in again." };
+  }
+
+  const parsed = resolvePayeeSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  try {
+    const payee = await resolvePayee({
+      username: parsed.data.username,
+      toGovernment: parsed.data.toGovernment,
+    });
+    return { ok: true, data: payee };
+  } catch (e) {
+    if (e instanceof PaymentError) return { ok: false, error: e.message };
+    return { ok: false, error: "That recipient could not be found." };
+  }
+}
+
+export type PaymentQuote = {
+  payee: ResolvedPayee;
+  grossAmount: number;
+  taxAmount: number;
+  netAmount: number;
+  taxRateBp: number;
+};
+
+/**
+ * Amount → tax → final amount, all computed server-side for the real resolved
+ * pair of wallets via `src/lib/taxmatrix.ts` (spec §10). The confirm step shows
+ * this and nothing it worked out itself.
+ */
+export async function quotePaymentAction(input: {
+  username: string;
+  toGovernment?: boolean;
+  amount: number;
+}): Promise<ActionResult<PaymentQuote>> {
+  let ctx;
+  try {
+    ctx = await requireActingContext();
+  } catch {
+    return { ok: false, error: "Your session has expired. Please sign in again." };
+  }
+
+  const parsed = paymentQuoteSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  try {
+    const quote = await quotePayment({
+      from: ctx.wallet,
+      username: parsed.data.username,
+      toGovernment: parsed.data.toGovernment,
+      amount: parsed.data.amount,
+    });
+    return { ok: true, data: quote };
+  } catch (e) {
+    if (e instanceof PaymentError) return { ok: false, error: e.message };
+    return { ok: false, error: "That payment could not be quoted." };
   }
 }
 

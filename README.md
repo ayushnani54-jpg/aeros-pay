@@ -128,10 +128,19 @@ See `.env.example` for the full annotated list. Summary:
 | `GOV_USERNAME`        | seed only| Government login username, read once by `seed:government`       |
 | `GOV_PASSWORD`        | seed only| Government login password (≥8 chars), read once                 |
 | `GOV_SECURITY_CODE`   | seed only| Government 2nd factor, ≥5 uppercase alphanumeric, read once     |
+| `CRON_SECRET`         | scheduled cleanup | Shared secret for `/api/cron/cleanup` |
 
 The three `GOV_*` variables are only ever read by the one-time seed script —
 nothing else in the app reads them, and they can be removed from the
 environment after seeding a deployment.
+
+`CRON_SECRET` protects the one scheduled job. On Vercel, setting it as a
+project Environment Variable is all that is needed: the platform then sends
+its value as an `Authorization: Bearer …` header on every cron invocation, and
+the route compares the two in constant time. **If it is not set, the route
+refuses every request** — an unset secret never means "open". The app does not
+depend on the job running: the Government pages run the same cleanup lazily,
+at most once per IST calendar day, as a fallback.
 
 ## Local setup
 
@@ -200,11 +209,36 @@ in `.env` locally or your platform's env settings for a one-off remote run.)
    DATABASE_URL="<production-url>" GOV_USERNAME=... GOV_PASSWORD=... \
      GOV_SECURITY_CODE=... npx tsx scripts/seed-government.ts
    ```
-7. Deploy. Log in to `/government/login` with the seeded credentials and
+7. Set `CRON_SECRET` in Vercel's Environment Variables (generate with
+   `openssl rand -base64 32`). `vercel.json` already declares the single
+   daily cron job that calls `/api/cron/cleanup`; Vercel picks it up on the
+   next deploy and signs each invocation with this value.
+8. Deploy. Log in to `/government/login` with the seeded credentials and
    start generating registration codes for your group.
 
+### The one scheduled job
+
+`vercel.json` declares exactly one cron entry, daily at `30 18 * * *` UTC —
+IST midnight. That shape is dictated by the Hobby plan, whose cron
+documentation states two limits worth knowing before changing it:
+
+* **Daily granularity only.** A Hobby cron job may run at most once per day;
+  a more frequent expression fails the deployment.
+* **Hour-level accuracy.** Vercel may fire the job anywhere inside the
+  scheduled hour to spread load, so the run lands somewhere between 23:30 and
+  00:29 IST. Nothing in the app assumes a precise minute.
+
+Delivery is also documented as best effort — a run can be missed, and one can
+occasionally be delivered twice. Both are designed for rather than hoped
+against: every retention predicate is a property of the row (age, status,
+expiry) instead of a cursor, so a missed run costs only a day of latency, and
+every statement re-states its conditions, so a duplicate run finds nothing to
+do. The handler works to a wall-clock budget and returns; a backlog larger
+than one budget continues on the next run instead of risking the function
+timeout.
+
 No other infrastructure is required — no separate API server, no queue, no
-cron, no blockchain node.
+worker, no blockchain node.
 
 ## Core rules reference
 
@@ -317,6 +351,20 @@ a genuine technical conflict required a decision, it's called out below.
   interpretation wasn't pinned down explicitly in the spec's rule list —
   it's what "suspend vs. ban" most naturally means and what the tests
   below verify.
+- **A ban is enforced at the write boundary, not by a layout.** `requireUser()`
+  and `requireActingContext()` — which every Server Action and the user export
+  route go through, and which no page uses — refuse a banned account outright.
+  Pages still read through `getCurrentUser()` / `getActingContext()`, so a
+  banned person can still sign in, read their own record and see why they were
+  banned. Before V3 Phase K only the `(app)` layout's redirect stood in the
+  way, and a layout never runs for a Server Action, so a banned account could
+  still post ratings, listings, contracts and support messages.
+- **Reconciliation and system health** live at `/gov/health` (linked from the
+  Government nav and the Control Room). "Run health check" runs the 17 read-only
+  checks in `src/lib/reconcile.ts` and stores nothing but a single
+  latest-status row; the storage half reads Postgres's own catalogs live and
+  stores nothing at all. `scripts/db-size-check.sql` is the same questions as a
+  single read-only query to paste into the Neon SQL editor.
 
 ## Testing summary
 
@@ -424,10 +472,20 @@ accessibility audit beyond basic semantic HTML.
   them (`test_issuance.ts`, the concurrent-payment test) mutate real rows,
   so they're development tooling, not a regression suite. They're
   reasonable to delete, or to adapt into a real CI-friendly suite, later.
-- **No literal rate-limiting/anti-bruteforce throttling** on login or
-  Government login beyond bcrypt's inherent hashing cost. Acceptable for a
-  small closed group behind a private Vercel URL, but worth adding
-  (e.g. an IP/username attempt counter) before wider use.
+- **Rate limiting is in-memory and per-instance** (`src/lib/ratelimit.ts`,
+  added in V3 Phase K). Login, Government login, registration and the
+  high-value financial actions each carry a fixed-window counter held in a
+  `Map` inside whichever Node process serves the request. Being honest about
+  what that is and is not: it is **not** global (Vercel may keep several warm
+  instances, so the deployment-wide limit is the per-instance limit times the
+  number of instances) and it does **not** survive a cold start. It is a speed
+  bump against casual abuse, credential guessing at human speed and runaway
+  double-submits — not a defence against a distributed attack. The alternative,
+  a `rate_limits` table, would write a database row per login attempt and per
+  payment attempt on a free-tier Neon database whose storage budget this
+  project deliberately manages, so it was rejected. The load-bearing
+  protections remain bcrypt's cost, server-derived amounts, conditional debits
+  inside transactions, and idempotency keys.
 - **System font stack, not a custom webfont.** `next/font/google` was
   dropped because the build environment used during development couldn't
   reach `fonts.googleapis.com`; the app uses the OS's default UI font

@@ -17,12 +17,17 @@ import {
   rejectLoanAction,
   resetUserPasswordAction,
   runCleanupAction,
+  runTextScrubAction,
   setCompanyDefaultTaxAction,
   setCompanyStatusAction,
   setCompanyTaxAction,
+  setEconomyPolicyAction,
   setLoanPolicyAction,
   setRetentionAction,
+  setV3RetentionAction,
   setSalePolicyAction,
+  setTextScrubSettingsAction,
+  setUserBadgesAction,
   suspendUserUntilAction,
   unarchiveAuditAction,
 } from "@/actions/government";
@@ -653,6 +658,89 @@ export function SalePolicyForm({
   );
 }
 
+/**
+ * V2.1 — company approval funding amount, the per-execution issuance cap,
+ * and the issuance cooldown (now "N India Standard Time calendar days since
+ * the last execution", not a rolling N×24h window). Previously hardcoded
+ * constants.
+ */
+export function EconomyPolicyForm({
+  companyApprovalFundingAmount,
+  maxIssuanceAmount,
+  issuanceCooldownDays,
+}: {
+  companyApprovalFundingAmount: number;
+  maxIssuanceAmount: number;
+  issuanceCooldownDays: number;
+}) {
+  const [state, formAction, pending] = useActionState(setEconomyPolicyAction, null);
+
+  return (
+    <form action={formAction} className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div>
+          <label htmlFor="epFunding" className="mb-1 block text-xs font-medium">
+            Company approval funding ({CURRENCY_NAME})
+          </label>
+          <input
+            id="epFunding"
+            name="companyApprovalFundingAmount"
+            type="number"
+            min={0}
+            max={1_000_000}
+            step={1}
+            className="input"
+            defaultValue={companyApprovalFundingAmount}
+            required
+          />
+        </div>
+        <div>
+          <label htmlFor="epMaxIssuance" className="mb-1 block text-xs font-medium">
+            Max issuance per execution ({CURRENCY_NAME})
+          </label>
+          <input
+            id="epMaxIssuance"
+            name="maxIssuanceAmount"
+            type="number"
+            min={1}
+            max={1_000_000}
+            step={1}
+            className="input"
+            defaultValue={maxIssuanceAmount}
+            required
+          />
+        </div>
+        <div>
+          <label htmlFor="epCooldown" className="mb-1 block text-xs font-medium">
+            Issuance cooldown (IST calendar days)
+          </label>
+          <input
+            id="epCooldown"
+            name="issuanceCooldownDays"
+            type="number"
+            min={0}
+            max={365}
+            step={1}
+            className="input"
+            defaultValue={issuanceCooldownDays}
+            required
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted">
+        A new company is funded once, on approval, with this amount (unless a one-off override is
+        used). The issuance cooldown is measured in India Standard Time calendar days — 1 means
+        Government can execute at most one issuance per IST calendar day.
+      </p>
+      <Err state={state} />
+      <Ok state={state} text="Economy policy updated." />
+      <button type="submit" className="btn btn-primary" disabled={pending}>
+        {pending ? "Saving…" : "Save economy policy"}
+      </button>
+    </form>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Loans
 // ---------------------------------------------------------------------------
@@ -1090,6 +1178,216 @@ export function RetentionSettingsForm({
   );
 }
 
+/**
+ * V3 Phase I — retention periods for the temporary V3 record classes.
+ *
+ * Same conventions as the form above: whole days, blank means "keep forever".
+ * Each input is labelled with what it can and cannot reach, because the
+ * difference between "this listing disappears" and "this order is deleted" is
+ * exactly the difference the owner needs to understand before typing a number.
+ */
+export function V3RetentionSettingsForm({
+  pausedOfferRetentionDays,
+  ratingCommentRetentionDays,
+  expiredWantedRetentionDays,
+  expiredOrderRetentionDays,
+  expiredContractRetentionDays,
+  promotionCampaignRetentionDays,
+  idempotencyKeyRetentionDays,
+}: {
+  pausedOfferRetentionDays: number | null;
+  ratingCommentRetentionDays: number | null;
+  expiredWantedRetentionDays: number | null;
+  expiredOrderRetentionDays: number | null;
+  expiredContractRetentionDays: number | null;
+  promotionCampaignRetentionDays: number | null;
+  idempotencyKeyRetentionDays: number | null;
+}) {
+  const [state, formAction, pending] = useActionState(setV3RetentionAction, null);
+
+  const fields: Array<{ id: string; name: string; label: string; value: number | null; hint: string }> = [
+    {
+      id: "rtPausedOffers",
+      name: "pausedOfferRetentionDays",
+      label: "Paused listings (days)",
+      value: pausedOfferRetentionDays,
+      hint: "Closed and removed from the Market. The listing row itself is kept.",
+    },
+    {
+      id: "rtRatingComments",
+      name: "ratingCommentRetentionDays",
+      label: "Rating comments (days)",
+      value: ratingCommentRetentionDays,
+      hint: "Only the comment. The star is permanent.",
+    },
+    {
+      id: "rtWanted",
+      name: "expiredWantedRetentionDays",
+      label: "Lapsed wanted requests (days)",
+      value: expiredWantedRetentionDays,
+      hint: "Expired or cancelled only. Fulfilled requests are kept.",
+    },
+    {
+      id: "rtOrders",
+      name: "expiredOrderRetentionDays",
+      label: "Lapsed orders (days)",
+      value: expiredOrderRetentionDays,
+      hint: "Only orders with no invoice, no payment and no rating.",
+    },
+    {
+      id: "rtContracts",
+      name: "expiredContractRetentionDays",
+      label: "Closed-contract applications (days)",
+      value: expiredContractRetentionDays,
+      hint: "Applications only. The contract is never deleted.",
+    },
+    {
+      id: "rtPromotions",
+      name: "promotionCampaignRetentionDays",
+      label: "Uncharged promotions (days)",
+      value: promotionCampaignRetentionDays,
+      hint: "Rejected or cancelled campaigns that were never charged.",
+    },
+    {
+      id: "rtIdempotency",
+      name: "idempotencyKeyRetentionDays",
+      label: "Payment replay keys (days)",
+      value: idempotencyKeyRetentionDays,
+      hint: "How long a new key protects against a duplicate payment.",
+    },
+  ];
+
+  return (
+    <form action={formAction} className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {fields.map((f) => (
+          <div key={f.id}>
+            <label htmlFor={f.id} className="mb-1 block text-sm font-medium">
+              {f.label}
+            </label>
+            <input
+              id={f.id}
+              name={f.name}
+              className="input"
+              defaultValue={f.value ?? ""}
+              placeholder="Keep forever"
+            />
+            <p className="mt-1 text-xs text-muted">{f.hint}</p>
+          </div>
+        ))}
+      </div>
+      <Err state={state} />
+      <Ok state={state} text="Retention periods saved." />
+      <button type="submit" className="btn btn-primary" disabled={pending}>
+        {pending ? "Saving…" : "Save V3 retention periods"}
+      </button>
+    </form>
+  );
+}
+
+/**
+ * V2.1 — text-field scrubbing ages. A separate, narrower capability from row
+ * deletion above: this never deletes a row, only blanks specific free-text
+ * columns (never an amount, party, id, status or timestamp) once a row is
+ * older than the configured age.
+ */
+export function TextScrubSettingsForm({
+  transactionReasonMaxAgeDays,
+  invoiceTextMaxAgeDays,
+  loanTextMaxAgeDays,
+  issuanceNoteMaxAgeDays,
+}: {
+  transactionReasonMaxAgeDays: number | null;
+  invoiceTextMaxAgeDays: number | null;
+  loanTextMaxAgeDays: number | null;
+  issuanceNoteMaxAgeDays: number | null;
+}) {
+  const [state, formAction, pending] = useActionState(setTextScrubSettingsAction, null);
+
+  return (
+    <form action={formAction} className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div>
+          <label htmlFor="tsTx" className="mb-1 block text-sm font-medium">
+            Transaction reasons (days)
+          </label>
+          <input
+            id="tsTx"
+            name="transactionReasonMaxAgeDays"
+            className="input"
+            defaultValue={transactionReasonMaxAgeDays ?? ""}
+            placeholder="Never"
+          />
+        </div>
+        <div>
+          <label htmlFor="tsInv" className="mb-1 block text-sm font-medium">
+            Invoice text (days)
+          </label>
+          <input
+            id="tsInv"
+            name="invoiceTextMaxAgeDays"
+            className="input"
+            defaultValue={invoiceTextMaxAgeDays ?? ""}
+            placeholder="Never"
+          />
+        </div>
+        <div>
+          <label htmlFor="tsLoan" className="mb-1 block text-sm font-medium">
+            Loan text (days)
+          </label>
+          <input
+            id="tsLoan"
+            name="loanTextMaxAgeDays"
+            className="input"
+            defaultValue={loanTextMaxAgeDays ?? ""}
+            placeholder="Never"
+          />
+        </div>
+        <div>
+          <label htmlFor="tsIss" className="mb-1 block text-sm font-medium">
+            Issuance notes (days)
+          </label>
+          <input
+            id="tsIss"
+            name="issuanceNoteMaxAgeDays"
+            className="input"
+            defaultValue={issuanceNoteMaxAgeDays ?? ""}
+            placeholder="Never"
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted">
+        Leave a field blank to never scrub that class. This only clears free-text notes/reasons —
+        amounts, ids, parties, statuses and timestamps are never touched, and rows are never
+        deleted.
+      </p>
+      <Err state={state} />
+      <Ok state={state} text="Text-scrub settings saved." />
+      <button type="submit" className="btn btn-primary" disabled={pending}>
+        {pending ? "Saving…" : "Save text-scrub settings"}
+      </button>
+    </form>
+  );
+}
+
+export function RunTextScrubForm() {
+  const [state, formAction, pending] = useActionState(runTextScrubAction, null);
+
+  return (
+    <form action={formAction} className="space-y-3">
+      <label htmlFor="scrubConfirm" className="block text-sm font-medium">
+        Type <span className="font-mono">{MAINTENANCE_CONFIRM_PHRASE}</span> to confirm
+      </label>
+      <input id="scrubConfirm" name="confirm" className="input" autoComplete="off" required />
+      <Err state={state} />
+      {state?.ok && <p className="text-sm text-success">{state.data.summary}</p>}
+      <button type="submit" className="btn btn-danger text-sm" disabled={pending}>
+        {pending ? "Clearing…" : "Clear text fields now"}
+      </button>
+    </form>
+  );
+}
+
 export function RunCleanupForm() {
   const [state, formAction, pending] = useActionState(runCleanupAction, null);
 
@@ -1170,5 +1468,75 @@ export function ArchiveAuditForm() {
         )}
       </form>
     </div>
+  );
+}
+
+/**
+ * GOVERNMENT IDENTITY LABELS (V3 Phase G, spec §§19,20)
+ *
+ * Two checkboxes and a save button, in the same shape as every other form on
+ * this page. The copy is deliberate: the screen says in so many words that
+ * these are labels and grant nothing, because the one thing a Government
+ * operator must not believe is that ticking a box here hands someone
+ * administrative power. It does not — `requireGovernment()` never reads these
+ * columns (src/lib/badges.ts).
+ */
+export function UserBadgeForm({
+  userId,
+  official,
+  member,
+}: {
+  userId: string;
+  official: boolean;
+  member: boolean;
+}) {
+  const [state, formAction, pending] = useActionState(setUserBadgesAction, null);
+
+  return (
+    <form action={formAction} className="space-y-3">
+      <input type="hidden" name="userId" value={userId} />
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          name="official"
+          value="1"
+          defaultChecked={official}
+          className="mt-0.5"
+          data-testid="badge-official-checkbox"
+        />
+        <span>
+          <span className="font-medium">Official Government User</span>
+          <span className="block text-xs text-muted">
+            Shows a GOV badge on this account&rsquo;s profile and in the directory.
+          </span>
+        </span>
+      </label>
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          name="member"
+          value="1"
+          defaultChecked={member}
+          className="mt-0.5"
+          data-testid="badge-member-checkbox"
+        />
+        <span>
+          <span className="font-medium">Government Member</span>
+          <span className="block text-xs text-muted">
+            Shows a Member badge. Also a label.
+          </span>
+        </span>
+      </label>
+      {state && !state.ok && <p className="text-sm text-danger">{state.error}</p>}
+      {state?.ok && <p className="text-sm text-success">Labels saved.</p>}
+      <button type="submit" className="btn btn-secondary" disabled={pending}>
+        {pending ? "Saving…" : "Save labels"}
+      </button>
+      <p className="text-xs text-muted">
+        These are identity labels only. Neither grants any administrative permission — the
+        Government panel is reachable only with a Government login — and neither changes what this
+        account can do as a user: they keep their company, their listings and the Market.
+      </p>
+    </form>
   );
 }

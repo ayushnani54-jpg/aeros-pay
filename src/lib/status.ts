@@ -102,6 +102,27 @@ export function canCompanyTrade(company: SuspendableCompany): boolean {
   return effectiveCompanyStatus(company) === "APPROVED";
 }
 
+/**
+ * Whether a company has a PUBLIC page at all (V3 Phase F, spec §21).
+ *
+ * This is the rule that makes a printed QR code stop working. A company QR
+ * contains the company's public-profile URL and nothing else — there is no code
+ * registry, no token and no scan log — so "revoking the code" is simply this
+ * predicate turning false and `/c/<username>` answering 404 from then on.
+ *
+ * PENDING and SUSPENDED stay visible (a suspension is a pause, and a pending
+ * application is the owner's own page). REVOKED and REJECTED do not: a revoked
+ * company has been taken out of the economy and a rejected one never entered
+ * it, so neither has a public presence for a code to resolve to.
+ */
+export function isCompanyPubliclyVisible(
+  company: SuspendableCompany,
+  now = new Date(),
+): boolean {
+  const status = effectiveCompanyStatus(company, now);
+  return status !== "REVOKED" && status !== "REJECTED";
+}
+
 /** A suspended company may still receive; a revoked one may not. */
 export function canCompanyReceive(company: SuspendableCompany): boolean {
   const status = effectiveCompanyStatus(company);

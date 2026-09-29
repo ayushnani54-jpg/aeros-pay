@@ -29,7 +29,7 @@ export default async function CompaniesPage({ searchParams }: PageProps<"/compan
         </div>
         <div className="flex gap-2">
           <Link href="/marketplace" className="btn btn-secondary text-sm">
-            For sale ({listings.length})
+            Companies for sale ({listings.length})
           </Link>
           {ctx.availableCompanies.length === 0 && (
             <Link href="/my-company" className="btn btn-primary text-sm">

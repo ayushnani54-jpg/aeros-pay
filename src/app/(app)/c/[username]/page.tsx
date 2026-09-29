@@ -5,15 +5,27 @@ import { getCompanyProfileByUsername } from "@/lib/queries";
 import { getActiveListingForCompany } from "@/lib/sales";
 import { CompanyStatusBadge } from "@/components/status-badge";
 import { BuyCompanyButton, MakeOfferForm } from "@/components/forms/company-forms";
-import { effectiveCompanyStatus } from "@/lib/status";
+import { effectiveCompanyStatus, isCompanyPubliclyVisible } from "@/lib/status";
 import { CURRENCY_NAME } from "@/lib/constants";
+import { formatDate } from "@/lib/datetime";
+import { CompanyQr } from "@/components/company-qr";
+import { getRequestOrigin } from "@/lib/origin";
+import { getCompanyRatingSummary, getRatingsForCompany } from "@/lib/ratings";
+import { RatingStars, RatingSummaryLine } from "@/components/rating-stars";
 
 /**
  * Public company profile.
  *
- * Shows what a customer needs — who runs it, what it does, how to pay it —
- * and deliberately never exposes the company's balance or private financial
- * history (spec §27).
+ * Shows what a customer needs — who runs it, what it does, how to pay it, what
+ * buyers thought of it, and a QR code that links here — and deliberately never
+ * exposes the company's balance or private financial history (spec §27).
+ *
+ * V3 Phase F: this page is also what makes a printed QR code STOP WORKING. A
+ * company QR contains this URL and nothing else, so "revoking the code" is not
+ * a separate mechanism — it is this page refusing. A REVOKED or REJECTED
+ * company is `notFound()` here, which means an old printed code resolves to a
+ * 404 the moment the Government revokes the company, with no code registry to
+ * keep in sync and nothing to expire.
  */
 export default async function PublicCompanyProfile({ params }: PageProps<"/c/[username]">) {
   const ctx = await getActingContext();
@@ -25,8 +37,21 @@ export default async function PublicCompanyProfile({ params }: PageProps<"/c/[us
 
   const { company, ownerUsername, ownerDisplayName } = row;
   const status = effectiveCompanyStatus(company);
+
+  // A revoked or rejected company has no public presence at all — see the note
+  // above about what this does to an already-printed QR code. The rule itself
+  // lives in src/lib/status.ts so it is one testable predicate rather than a
+  // condition written out here.
+  if (!isCompanyPubliclyVisible(company)) notFound();
+
   const listing = await getActiveListingForCompany(company.id);
   const isOwner = company.ownerUserId === ctx.user.id;
+
+  const [ratingSummary, ratings, origin] = await Promise.all([
+    getCompanyRatingSummary(company.id),
+    getRatingsForCompany(company.id, 10),
+    getRequestOrigin(),
+  ]);
 
   return (
     <div className="space-y-5">
@@ -40,6 +65,9 @@ export default async function PublicCompanyProfile({ params }: PageProps<"/c/[us
             <h1 className="text-2xl font-semibold tracking-tight">{company.name}</h1>
             <p className="mt-1 font-mono text-sm text-muted">@{company.username}</p>
             <p className="mt-1 text-sm text-muted">{company.category}</p>
+            <div className="mt-2">
+              <RatingSummaryLine average={ratingSummary.average} count={ratingSummary.count} />
+            </div>
           </div>
           <div className="flex flex-col items-end gap-2">
             <CompanyStatusBadge status={status} />
@@ -63,7 +91,7 @@ export default async function PublicCompanyProfile({ params }: PageProps<"/c/[us
           )}
         </p>
         <p className="mt-1 text-xs text-muted">
-          Trading since {new Date(company.createdAt).toLocaleDateString()}
+          Trading since {formatDate(company.createdAt)}
         </p>
 
         {status === "APPROVED" && !isOwner && (
@@ -119,6 +147,47 @@ export default async function PublicCompanyProfile({ params }: PageProps<"/c/[us
           </div>
         </div>
       )}
+
+      {status === "APPROVED" && (
+        <section className="card p-5">
+          <h2 className="mb-3 font-medium">Company QR code</h2>
+          <CompanyQr origin={origin} username={company.username} />
+        </section>
+      )}
+
+      <section className="card p-5">
+        <h2 className="font-medium">Ratings</h2>
+        <p className="mt-1 text-sm text-muted">
+          Left by buyers whose orders completed. One rating per order, and only the buyer can
+          leave it.
+        </p>
+        <div className="mt-3">
+          <RatingSummaryLine average={ratingSummary.average} count={ratingSummary.count} />
+        </div>
+
+        {ratings.length > 0 && (
+          <div className="mt-4 divide-y divide-border">
+            {ratings.map((rating) => (
+              <div key={rating.id} className="py-3" data-testid="rating-row">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <RatingStars stars={rating.stars} />
+                  <span className="text-xs text-muted">{formatDate(rating.createdAt)}</span>
+                </div>
+                <p className="mt-1 text-xs text-muted">
+                  {rating.raterHandle ? `@${rating.raterHandle}` : rating.raterLabel}
+                </p>
+                {rating.comment ? (
+                  <p className="mt-1 whitespace-pre-line text-sm">{rating.comment}</p>
+                ) : rating.commentCleared ? (
+                  <p className="mt-1 text-sm italic text-muted">
+                    Comment removed — the star stays.
+                  </p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <p className="text-xs text-muted">
         Company balances and private financial history are never shown publicly.

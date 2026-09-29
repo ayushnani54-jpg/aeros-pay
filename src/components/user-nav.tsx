@@ -19,19 +19,32 @@ type IconName = "home" | "send" | "people" | "list" | "updates" | "profile" | "c
 const PRIMARY: NavItem[] = [
   { href: "/dashboard", label: "Home", icon: "home" },
   { href: "/pay", label: "Pay", icon: "send" },
+  // V3: the goods-and-services Market. Deliberately NOT "/marketplace", which
+  // has meant "companies that are for sale" since V2 and still does.
+  { href: "/market", label: "Market", icon: "list" },
   { href: "/people", label: "People", icon: "people" },
   { href: "/companies", label: "Companies", icon: "company" },
   { href: "/transactions", label: "Activity", icon: "list" },
 ];
 
 const SECONDARY: NavItem[] = [
+  { href: "/market/orders", label: "My Orders", icon: "list" },
+  { href: "/market/leaderboard", label: "Leaderboard", icon: "list" },
+  { href: "/market/wanted", label: "Wanted", icon: "updates" },
+  { href: "/market/contracts", label: "Contracts", icon: "updates" },
   { href: "/notifications", label: "Notifications", icon: "updates" },
   { href: "/updates", label: "Updates", icon: "updates" },
   { href: "/contact-government", label: "Contact Government", icon: "updates" },
   { href: "/profile", label: "Profile", icon: "profile" },
 ];
 
-/** Mobile bottom bar keeps exactly five destinations, as in V1. */
+/**
+ * Mobile bottom bar keeps exactly five destinations, as in V1.
+ *
+ * V3 deliberately does NOT add a sixth: the bar is a five-column grid and a
+ * sixth item would change the layout everyone already knows. The Market is
+ * reached on a phone from the dashboard's quick actions instead.
+ */
 const MOBILE: NavItem[] = [
   { href: "/dashboard", label: "Home", icon: "home" },
   { href: "/pay", label: "Pay", icon: "send" },

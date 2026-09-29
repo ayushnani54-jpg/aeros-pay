@@ -47,18 +47,23 @@ import {
 import {
   archiveAuditLogs,
   clearAllUpdates,
-  runCleanup,
+  runFullCleanup,
+  runTextScrub,
   unarchiveAllAuditLogs,
   updateRetentionSettings,
+  updateTextScrubSettings,
+  updateV3RetentionSettings,
 } from "@/lib/retention";
 import { hashSecret } from "@/lib/password";
 import { healExpiredSuspensions } from "@/lib/status";
+import { formatDateTime } from "@/lib/datetime";
 import {
   adjustBalanceSchema,
   adjustCompanyBalanceSchema,
   archiveAuditSchema,
   banUserSchema,
   companyStatusSchema,
+  economyPolicySchema,
   editCompanySchema,
   fundUserSchema,
   governmentPaymentSchema,
@@ -70,13 +75,45 @@ import {
   rejectCompanySchema,
   resetPasswordSchema,
   retentionSettingsSchema,
+  v3RetentionSettingsSchema,
   reviewCompanySchema,
   revokeCodeSchema,
   setCompanyTaxSchema,
   setTaxRateSchema,
   suspendUserSchema,
+  textScrubSettingsSchema,
   timedSuspendSchema,
+  // --- V3 ---
+  contractAwardSchema,
+  contractIdSchema,
+  contractSchema,
+  officialPromotionSchema,
+  promotionIdSchema,
+  promotionPolicySchema,
+  promotionReviewSchema,
+  reverseTransactionSchema,
+  userBadgesSchema,
 } from "@/lib/validators";
+import {
+  activatePromotion,
+  cancelPromotion,
+  createOfficialPromotion,
+  getCampaignById,
+  reviewPromotion,
+  setPromotionPolicy,
+  PromotionError,
+} from "@/lib/promotions";
+import {
+  awardContract,
+  cancelContract,
+  createContract,
+  isContractPaymentInProgress,
+  payAwardedContractToUser,
+  ContractError,
+} from "@/lib/contracts";
+import { reverseTransaction, ReversalError } from "@/lib/reversals";
+import { BadgeError, setUserBadges } from "@/lib/badges";
+import { runHealthCheck, saveHealthCheckStatus } from "@/lib/reconcile";
 import { MAINTENANCE_CONFIRM_PHRASE } from "@/lib/constants";
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
@@ -89,7 +126,11 @@ function errMsg(e: unknown, fallback: string): string {
     e instanceof SaleError ||
     e instanceof IpError ||
     e instanceof IssuanceError ||
-    e instanceof PaymentError
+    e instanceof PaymentError ||
+    e instanceof PromotionError ||
+    e instanceof ContractError ||
+    e instanceof ReversalError ||
+    e instanceof BadgeError
   ) {
     return e.message;
   }
@@ -313,7 +354,7 @@ export async function suspendUserUntilAction(
       reason: parsed.data.reason,
       suspendedUntil: until,
       action: "ACCOUNT_SUSPENDED",
-      notifyMessage: `Your account is suspended until ${until.toLocaleString()}. Reason: ${parsed.data.reason}`,
+      notifyMessage: `Your account is suspended until ${formatDateTime(until)}. Reason: ${parsed.data.reason}`,
       actorLabel: g.username,
       actorId: g.id,
     });
@@ -975,6 +1016,77 @@ export async function setCompanyTaxAction(
   revalidatePath("/gov/tax");
   revalidatePath("/gov/companies");
   revalidatePath(`/gov/companies/${company.id}`);
+  return { ok: true, data: undefined };
+}
+
+/**
+ * V2.1 — the economy policy row: company approval funding amount, the
+ * per-execution issuance cap, and the issuance cooldown (now measured in IST
+ * calendar days — see src/lib/issuance.ts). These used to be hardcoded
+ * constants; they follow the exact same validation/audit/revalidate pattern
+ * as setTaxRateAction and setSalePolicyAction above.
+ */
+export async function setEconomyPolicyAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  let g;
+  try {
+    g = await gov();
+  } catch {
+    return { ok: false, error: "Government authorization required." };
+  }
+
+  const parsed = economyPolicySchema.safeParse({
+    companyApprovalFundingAmount: formData.get("companyApprovalFundingAmount"),
+    maxIssuanceAmount: formData.get("maxIssuanceAmount"),
+    issuanceCooldownDays: formData.get("issuanceCooldownDays"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  await db.transaction(async (tx) => {
+    const [govRow] = await tx
+      .select()
+      .from(government)
+      .where(eq(government.id, g.id))
+      .for("update");
+    if (!govRow) throw new Error("Government account not found.");
+
+    const now = new Date();
+
+    await tx
+      .update(government)
+      .set({
+        companyApprovalFundingAmount: parsed.data.companyApprovalFundingAmount,
+        companyApprovalFundingUpdatedAt: now,
+        maxIssuanceAmount: parsed.data.maxIssuanceAmount,
+        maxIssuanceAmountUpdatedAt: now,
+        issuanceCooldownDays: parsed.data.issuanceCooldownDays,
+        issuanceCooldownUpdatedAt: now,
+      })
+      .where(eq(government.id, govRow.id));
+
+    await recordAudit(tx, {
+      action: "ECONOMY_POLICY_CHANGED",
+      actorType: "GOVERNMENT",
+      actorId: g.id,
+      actorLabel: g.username,
+      previousValue: JSON.stringify({
+        companyApprovalFundingAmount: govRow.companyApprovalFundingAmount,
+        maxIssuanceAmount: govRow.maxIssuanceAmount,
+        issuanceCooldownDays: govRow.issuanceCooldownDays,
+      }),
+      newValue: JSON.stringify(parsed.data),
+      metadata: parsed.data,
+    });
+  });
+
+  revalidatePath("/gov/tax");
+  revalidatePath("/gov/issuance");
+  revalidatePath("/gov/companies");
+  revalidatePath("/gov");
   return { ok: true, data: undefined };
 }
 
@@ -1736,6 +1848,94 @@ export async function setRetentionAction(
   return { ok: true, data: undefined };
 }
 
+/** V2.1 — text-scrub ages, one per data class. Same pattern as setRetentionAction. */
+export async function setTextScrubSettingsAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  let g;
+  try {
+    g = await gov();
+  } catch {
+    return { ok: false, error: "Government authorization required." };
+  }
+
+  const parsed = textScrubSettingsSchema.safeParse({
+    transactionReasonMaxAgeDays: formData.get("transactionReasonMaxAgeDays") ?? "",
+    invoiceTextMaxAgeDays: formData.get("invoiceTextMaxAgeDays") ?? "",
+    loanTextMaxAgeDays: formData.get("loanTextMaxAgeDays") ?? "",
+    issuanceNoteMaxAgeDays: formData.get("issuanceNoteMaxAgeDays") ?? "",
+  });
+  if (!parsed.success) return { ok: false, error: "Invalid request." };
+
+  const toDays = (raw: string): number | null => {
+    const trimmed = raw.trim();
+    if (trimmed === "") return null;
+    const value = Number(trimmed);
+    if (!Number.isInteger(value) || value < 1 || value > 3650) {
+      throw new Error("Scrub ages must be whole numbers of days between 1 and 3650.");
+    }
+    return value;
+  };
+
+  try {
+    await updateTextScrubSettings({
+      transactionReasonMaxAgeDays: toDays(parsed.data.transactionReasonMaxAgeDays),
+      invoiceTextMaxAgeDays: toDays(parsed.data.invoiceTextMaxAgeDays),
+      loanTextMaxAgeDays: toDays(parsed.data.loanTextMaxAgeDays),
+      issuanceNoteMaxAgeDays: toDays(parsed.data.issuanceNoteMaxAgeDays),
+      governmentId: g.id,
+      governmentUsername: g.username,
+    });
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "Could not save the text-scrub settings.") };
+  }
+
+  revalidatePath("/gov/retention");
+  return { ok: true, data: undefined };
+}
+
+/**
+ * Clears free-text fields (never amounts, ids, parties, balances or
+ * timestamps) on transactions/invoices/loans/issuance records older than
+ * the configured ages. Idempotent — safe to run repeatedly, and rows already
+ * cleared are simply skipped. Gated behind the same confirm phrase as the
+ * other destructive-looking maintenance actions, even though nothing
+ * financial is ever touched.
+ */
+export async function runTextScrubAction(
+  _prev: ActionResult<{ summary: string }> | null,
+  formData: FormData,
+): Promise<ActionResult<{ summary: string }>> {
+  let g;
+  try {
+    g = await gov();
+  } catch {
+    return { ok: false, error: "Government authorization required." };
+  }
+
+  const confirm = String(formData.get("confirm") ?? "").trim();
+  if (confirm !== MAINTENANCE_CONFIRM_PHRASE) {
+    return {
+      ok: false,
+      error: `Type "${MAINTENANCE_CONFIRM_PHRASE}" exactly to confirm this cleanup.`,
+    };
+  }
+
+  const result = await runTextScrub({
+    governmentId: g.id,
+    governmentUsername: g.username,
+  });
+
+  revalidatePath("/gov/retention");
+  return {
+    ok: true,
+    data: {
+      summary: `${result.transactionsScrubbed} transactions, ${result.invoicesScrubbed} invoices, ${result.loansScrubbed} loans and ${result.issuanceNotesScrubbed} issuance notes scrubbed.`,
+    },
+  };
+}
+
 export async function runCleanupAction(
   _prev: ActionResult<{ summary: string }> | null,
   formData: FormData,
@@ -1755,18 +1955,89 @@ export async function runCleanupAction(
     };
   }
 
-  const result = await runCleanup({
-    governmentId: g.id,
-    governmentUsername: g.username,
-  });
+  // The same engine the scheduled job runs, with a longer budget because a
+  // person is watching and is allowed to wait a few seconds. Whatever does not
+  // fit in the budget is reported and picked up by the next run — a cleanup
+  // never runs unbounded just because it was started by hand.
+  const summary = await runFullCleanup(
+    { source: "GOVERNMENT", governmentId: g.id, governmentUsername: g.username },
+    { budgetMs: 15_000 },
+  );
+
+  const touched = summary.targets
+    .filter((t) => t.affected > 0)
+    .map((t) => `${t.affected} ${t.key.toLowerCase().replaceAll("_", " ")}`);
+
+  const headline =
+    touched.length === 0
+      ? "Nothing was eligible for cleanup."
+      : `Removed or cleared ${summary.totalAffected} records: ${touched.join(", ")}.`;
+
+  const tail = summary.completed
+    ? ""
+    : " Some records remain — run it again, or wait for the nightly job.";
+  const failed = summary.failures.length > 0 ? ` Failures: ${summary.failures.join("; ")}` : "";
 
   revalidatePath("/gov/retention");
-  return {
-    ok: true,
-    data: {
-      summary: `${result.updatesDeleted} updates, ${result.notificationsDeleted} notifications and ${result.supportMessagesDeleted} support messages removed.`,
-    },
+  return { ok: true, data: { summary: `${headline}${tail}${failed}` } };
+}
+
+/**
+ * V3 retention periods (paused listings, rating comments, lapsed wanted
+ * requests and orders, closed-contract applications, uncharged promotions,
+ * idempotency keys). Deliberately a separate action from the V2 one above so
+ * neither form can silently reset the other's columns.
+ */
+export async function setV3RetentionAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  let g;
+  try {
+    g = await gov();
+  } catch {
+    return { ok: false, error: "Government authorization required." };
+  }
+
+  const parsed = v3RetentionSettingsSchema.safeParse({
+    pausedOfferRetentionDays: formData.get("pausedOfferRetentionDays") ?? "",
+    ratingCommentRetentionDays: formData.get("ratingCommentRetentionDays") ?? "",
+    expiredWantedRetentionDays: formData.get("expiredWantedRetentionDays") ?? "",
+    expiredOrderRetentionDays: formData.get("expiredOrderRetentionDays") ?? "",
+    expiredContractRetentionDays: formData.get("expiredContractRetentionDays") ?? "",
+    promotionCampaignRetentionDays: formData.get("promotionCampaignRetentionDays") ?? "",
+    idempotencyKeyRetentionDays: formData.get("idempotencyKeyRetentionDays") ?? "",
+  });
+  if (!parsed.success) return { ok: false, error: "Invalid request." };
+
+  const toDays = (raw: string): number | null => {
+    const trimmed = raw.trim();
+    if (trimmed === "") return null;
+    const value = Number(trimmed);
+    if (!Number.isInteger(value) || value < 1 || value > 3650) {
+      throw new Error("Retention periods must be whole numbers of days between 1 and 3650.");
+    }
+    return value;
   };
+
+  try {
+    await updateV3RetentionSettings({
+      pausedOfferRetentionDays: toDays(parsed.data.pausedOfferRetentionDays),
+      ratingCommentRetentionDays: toDays(parsed.data.ratingCommentRetentionDays),
+      expiredWantedRetentionDays: toDays(parsed.data.expiredWantedRetentionDays),
+      expiredOrderRetentionDays: toDays(parsed.data.expiredOrderRetentionDays),
+      expiredContractRetentionDays: toDays(parsed.data.expiredContractRetentionDays),
+      promotionCampaignRetentionDays: toDays(parsed.data.promotionCampaignRetentionDays),
+      idempotencyKeyRetentionDays: toDays(parsed.data.idempotencyKeyRetentionDays),
+      governmentId: g.id,
+      governmentUsername: g.username,
+    });
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "Could not save the retention settings.") };
+  }
+
+  revalidatePath("/gov/retention");
+  return { ok: true, data: undefined };
 }
 
 export async function clearUpdatesAction(
@@ -1857,4 +2128,514 @@ export async function healSuspensionsAction(): Promise<ActionResult> {
   await healExpiredSuspensions();
   revalidatePath("/gov/users");
   return { ok: true, data: undefined };
+}
+
+// ---------------------------------------------------------------------------
+// V3 — promotions, Government contracts and refunds (spec §§17,18,24)
+// ---------------------------------------------------------------------------
+
+/**
+ * Approves or rejects a company's promotion request.
+ *
+ * The daily rate is NOT in this form: `reviewPromotion` re-reads
+ * `government.promotion_daily_rate` inside its transaction and freezes it onto
+ * the campaign, so what a campaign costs is decided by the policy in force at
+ * approval and never by a field.
+ */
+export async function reviewPromotionAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  let g;
+  try {
+    g = await gov();
+  } catch {
+    return { ok: false, error: "Government session required." };
+  }
+
+  const parsed = promotionReviewSchema.safeParse({
+    campaignId: formData.get("campaignId"),
+    decision: formData.get("decision"),
+    reason: formData.get("reason") ?? "",
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  try {
+    await reviewPromotion({
+      campaignId: parsed.data.campaignId,
+      approve: parsed.data.decision === "APPROVE",
+      reason: parsed.data.reason || null,
+      actorLabel: g.username,
+      governmentId: g.id,
+    });
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "Could not review that promotion.") };
+  }
+
+  revalidatePath("/gov/promotions");
+  revalidatePath("/my-company/promotions");
+  return { ok: true, data: undefined };
+}
+
+export async function setPromotionPolicyAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  let g;
+  try {
+    g = await gov();
+  } catch {
+    return { ok: false, error: "Government session required." };
+  }
+
+  const parsed = promotionPolicySchema.safeParse({
+    enabled: formData.get("enabled") ? true : false,
+    dailyRate: formData.get("dailyRate"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  try {
+    await setPromotionPolicy({
+      governmentId: g.id,
+      actorLabel: g.username,
+      enabled: parsed.data.enabled ?? false,
+      dailyRate: parsed.data.dailyRate,
+    });
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "Could not update the promotion policy.") };
+  }
+
+  revalidatePath("/gov/promotions");
+  return { ok: true, data: undefined };
+}
+
+/** Government cancels any campaign — including one it did not create. */
+export async function govCancelPromotionAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  let g;
+  try {
+    g = await gov();
+  } catch {
+    return { ok: false, error: "Government session required." };
+  }
+
+  const parsed = promotionIdSchema.safeParse({ campaignId: formData.get("campaignId") });
+  if (!parsed.success) return { ok: false, error: "Invalid request." };
+
+  try {
+    const campaign = await getCampaignById(parsed.data.campaignId);
+    if (!campaign) return { ok: false, error: "Campaign not found." };
+    await cancelPromotion({
+      campaignId: campaign.id,
+      companyId: campaign.companyId,
+      byGovernment: true,
+      actorLabel: g.username,
+    });
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "Could not cancel that promotion.") };
+  }
+
+  revalidatePath("/gov/promotions");
+  revalidatePath("/dashboard");
+  revalidatePath("/market");
+  return { ok: true, data: undefined };
+}
+
+/**
+ * Creates one of the official promotions (New Player Bonus, Government Demand,
+ * Limited Opportunity). No company, no charge — the Treasury does not bill
+ * itself, and `runPromotionCharges` skips a campaign with no company.
+ */
+export async function createOfficialPromotionAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  let g;
+  try {
+    g = await gov();
+  } catch {
+    return { ok: false, error: "Government session required." };
+  }
+
+  const parsed = officialPromotionSchema.safeParse({
+    kind: formData.get("kind"),
+    heading: formData.get("heading"),
+    shortDescription: formData.get("shortDescription"),
+    ctaLabel: formData.get("ctaLabel") ?? "",
+    destination: formData.get("destination"),
+    durationDays: formData.get("durationDays"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  try {
+    await createOfficialPromotion({
+      governmentId: g.id,
+      actorLabel: g.username,
+      kind: parsed.data.kind,
+      heading: parsed.data.heading,
+      shortDescription: parsed.data.shortDescription,
+      ctaLabel: parsed.data.ctaLabel || "Learn more",
+      destination: parsed.data.destination,
+      durationDays: parsed.data.durationDays,
+      activate: formData.get("activate") === "on",
+    });
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "Could not create that promotion.") };
+  }
+
+  revalidatePath("/gov/promotions");
+  revalidatePath("/dashboard");
+  revalidatePath("/market");
+  return { ok: true, data: undefined };
+}
+
+export async function govActivatePromotionAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    await gov();
+  } catch {
+    return { ok: false, error: "Government session required." };
+  }
+
+  const parsed = promotionIdSchema.safeParse({ campaignId: formData.get("campaignId") });
+  if (!parsed.success) return { ok: false, error: "Invalid request." };
+
+  try {
+    const campaign = await getCampaignById(parsed.data.campaignId);
+    if (!campaign) return { ok: false, error: "Campaign not found." };
+    if (campaign.companyId !== null) {
+      return {
+        ok: false,
+        error: "A company activates its own approved campaign; the Government only reviews it.",
+      };
+    }
+    await activatePromotion({ campaignId: campaign.id, companyId: null });
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "Could not start that promotion.") };
+  }
+
+  revalidatePath("/gov/promotions");
+  revalidatePath("/dashboard");
+  revalidatePath("/market");
+  return { ok: true, data: undefined };
+}
+
+/** The Government puts a piece of work out to tender (spec §17). */
+export async function createGovernmentContractAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    await gov();
+  } catch {
+    return { ok: false, error: "Government session required." };
+  }
+
+  const parsed = contractSchema.safeParse({
+    title: formData.get("title"),
+    requirement: formData.get("requirement"),
+    description: formData.get("description"),
+    conditions: formData.get("conditions") ?? "",
+    budget: formData.get("budget"),
+    deadline: formData.get("deadline") ?? "",
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  try {
+    const deadline = parsed.data.deadline
+      ? new Date(`${parsed.data.deadline}T23:59:59`)
+      : null;
+    await createContract({
+      issuer: { type: "GOVERNMENT" },
+      input: {
+        title: parsed.data.title,
+        requirement: parsed.data.requirement,
+        description: parsed.data.description,
+        conditions: parsed.data.conditions || null,
+        budget: parsed.data.budget,
+        deadline: deadline && !Number.isNaN(deadline.getTime()) ? deadline : null,
+      },
+    });
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "Could not create that contract.") };
+  }
+
+  revalidatePath("/gov/contracts");
+  revalidatePath("/market/contracts");
+  return { ok: true, data: undefined };
+}
+
+export async function awardGovernmentContractAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  let g;
+  try {
+    g = await gov();
+  } catch {
+    return { ok: false, error: "Government session required." };
+  }
+
+  const parsed = contractAwardSchema.safeParse({
+    contractId: formData.get("contractId"),
+    applicationId: formData.get("applicationId"),
+  });
+  if (!parsed.success) return { ok: false, error: "Invalid request." };
+
+  try {
+    await awardContract({
+      contractId: parsed.data.contractId,
+      applicationId: parsed.data.applicationId,
+      actor: { type: "GOVERNMENT" },
+      actorLabel: g.username,
+    });
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "Could not award that contract.") };
+  }
+
+  revalidatePath("/gov/contracts");
+  revalidatePath("/market/contracts");
+  return { ok: true, data: undefined };
+}
+
+export async function cancelGovernmentContractAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    await gov();
+  } catch {
+    return { ok: false, error: "Government session required." };
+  }
+
+  const parsed = contractIdSchema.safeParse({ contractId: formData.get("contractId") });
+  if (!parsed.success) return { ok: false, error: "Invalid request." };
+
+  try {
+    await cancelContract({ contractId: parsed.data.contractId, actor: { type: "GOVERNMENT" } });
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "Could not cancel that contract.") };
+  }
+
+  revalidatePath("/gov/contracts");
+  revalidatePath("/market/contracts");
+  return { ok: true, data: undefined };
+}
+
+/** The Treasury pays a Government contract awarded to a person. */
+export async function payGovernmentContractAction(
+  _prev: ActionResult<{ txRef: string; amount: number; replayed: boolean }> | null,
+  formData: FormData,
+): Promise<ActionResult<{ txRef: string; amount: number; replayed: boolean }>> {
+  let g;
+  try {
+    g = await gov();
+  } catch {
+    return { ok: false, error: "Government session required." };
+  }
+
+  const parsed = contractIdSchema.safeParse({ contractId: formData.get("contractId") });
+  if (!parsed.success) return { ok: false, error: "Invalid request." };
+
+  try {
+    const result = await payAwardedContractToUser({
+      contractId: parsed.data.contractId,
+      actor: { type: "GOVERNMENT", id: g.id, label: g.username },
+    });
+    revalidatePath("/gov/contracts");
+    revalidatePath("/gov/treasury");
+    revalidatePath("/market/contracts");
+    return {
+      ok: true,
+      data: { txRef: result.txRef, amount: result.amount, replayed: result.replayed },
+    };
+  } catch (e) {
+    if (isContractPaymentInProgress(e)) {
+      return { ok: false, error: "This payment is already being processed. Refresh in a moment." };
+    }
+    return { ok: false, error: errMsg(e, "Could not pay that contract.") };
+  }
+}
+
+/**
+ * Reverses (or partially adjusts) any transaction, as the Government.
+ *
+ * The original ledger row is never edited or deleted: `reverseTransaction`
+ * writes a NEW row linked to it through `reverses_transaction_id`, with the
+ * reason and the acting Government recorded in the audit log (spec §18).
+ */
+export async function reverseTransactionAction(
+  _prev: ActionResult<{ reversalTxRef: string; refundedToPayer: number }> | null,
+  formData: FormData,
+): Promise<ActionResult<{ reversalTxRef: string; refundedToPayer: number }>> {
+  let g;
+  try {
+    g = await gov();
+  } catch {
+    return { ok: false, error: "Government session required." };
+  }
+
+  const parsed = reverseTransactionSchema.safeParse({
+    transactionId: formData.get("transactionId"),
+    reason: formData.get("reason"),
+    amount: formData.get("amount") ?? "",
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  try {
+    const result = await reverseTransaction({
+      transactionId: parsed.data.transactionId,
+      actor: { type: "GOVERNMENT", id: g.id, label: g.username },
+      reason: parsed.data.reason,
+      amount: parsed.data.amount,
+    });
+    revalidatePath("/gov/transactions");
+    revalidatePath("/gov/treasury");
+    revalidatePath("/transactions");
+    return {
+      ok: true,
+      data: { reversalTxRef: result.reversalTxRef, refundedToPayer: result.refundedToPayer },
+    };
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "Could not reverse that transaction.") };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Government badges (V3 Phase G, spec §§19,20)
+// ---------------------------------------------------------------------------
+
+/**
+ * Links an existing account as an Official Government User and/or tags it as a
+ * Government Member.
+ *
+ * AUTHORITY COMES FROM THE SESSION, NOT FROM THE BADGE. This action begins
+ * with `gov()` → `requireGovernment()`, which reads the signed Government
+ * session cookie and the `government` row and never looks at `users`. Setting
+ * these flags therefore cannot make the badged account able to reach this
+ * action, or any other Government action: they would still need the Government
+ * login. The columns are identity labels and the app has no code path that
+ * treats them as anything else (see src/lib/badges.ts).
+ *
+ * It also changes nothing about what the user can do as a user: their status,
+ * balance, companies, listings and orders are untouched, so a linked
+ * Government user keeps running their company and trading normally (spec §19).
+ */
+export async function setUserBadgesAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  let g;
+  try {
+    g = await gov();
+  } catch {
+    return { ok: false, error: "Government authorization required." };
+  }
+
+  const parsed = userBadgesSchema.safeParse({
+    userId: formData.get("userId"),
+    official: formData.get("official"),
+    member: formData.get("member"),
+  });
+  if (!parsed.success) return { ok: false, error: "Invalid request." };
+
+  try {
+    await setUserBadges({
+      userId: parsed.data.userId,
+      official: parsed.data.official,
+      member: parsed.data.member,
+      governmentId: g.id,
+      governmentUsername: g.username,
+    });
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "Could not update those labels.") };
+  }
+
+  revalidatePath("/gov/users");
+  revalidatePath(`/gov/users/${parsed.data.userId}`);
+  revalidatePath("/people");
+  return {
+    ok: true,
+    data: undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Health check (V3 Phase K, spec §§40, 48)
+// ---------------------------------------------------------------------------
+
+export type HealthCheckSummary = {
+  healthy: boolean;
+  checksRun: number;
+  checksFailed: number;
+  ranAt: string;
+};
+
+/**
+ * Runs the full reconciliation and saves ONLY the latest status summary.
+ *
+ * Every check is a query: this action moves no Aeros, repairs nothing and
+ * writes nothing except the one `reconciliation_status` singleton row that
+ * lets the panel say when the check last ran and whether it passed. There is
+ * deliberately no history table (see the note at the top of lib/reconcile.ts).
+ *
+ * The full per-check detail is re-derived by the page on every render, so the
+ * Government always reads live results rather than a stored snapshot that
+ * could have gone stale.
+ */
+export async function runHealthCheckAction(): Promise<ActionResult<HealthCheckSummary>> {
+  let g;
+  try {
+    g = await gov();
+  } catch {
+    return { ok: false, error: "Government authorization required." };
+  }
+
+  try {
+    const result = await runHealthCheck();
+    await saveHealthCheckStatus(result, g.username);
+
+    await recordAudit(db, {
+      action: "HEALTH_CHECK_RUN",
+      actorType: "GOVERNMENT",
+      actorId: g.id,
+      actorLabel: g.username,
+      targetType: "SYSTEM",
+      targetId: "reconciliation",
+      newValue: result.healthy ? "HEALTHY" : "FAILED",
+      metadata: {
+        checksRun: String(result.checksRun),
+        checksFailed: String(result.checksFailed),
+      },
+    });
+
+    revalidatePath("/gov/health");
+    revalidatePath("/gov/control-room");
+
+    return {
+      ok: true,
+      data: {
+        healthy: result.healthy,
+        checksRun: result.checksRun,
+        checksFailed: result.checksFailed,
+        ranAt: result.ranAt.toISOString(),
+      },
+    };
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "The health check could not be completed.") };
+  }
 }

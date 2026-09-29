@@ -20,6 +20,7 @@ import {
   users,
 } from "@/db/schema";
 import { and, desc, eq, ilike, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { badgesOf } from "./badges";
 import { effectiveUserStatus } from "./status";
 
 // ---------------------------------------------------------------------------
@@ -95,7 +96,14 @@ export async function getOpenIssuanceRequestsForUser(userId: string) {
 // Directories & public profiles
 // ---------------------------------------------------------------------------
 
-/** People directory. Balances are never exposed here. */
+/**
+ * People directory. Balances are never exposed here.
+ *
+ * V3 Phase G: the two Government label columns are selected so the directory
+ * can render the badges. They are read here ONLY to be displayed — this
+ * function returns them as an inert `badges` value and nothing downstream
+ * branches on them (see src/lib/badges.ts).
+ */
 export async function searchUsers(query: string, excludeUserId?: string, limit = 50) {
   const conditions = [];
   if (query) {
@@ -114,20 +122,31 @@ export async function searchUsers(query: string, excludeUserId?: string, limit =
       status: users.status,
       suspendedUntil: users.suspendedUntil,
       createdAt: users.createdAt,
+      isOfficialGovernmentUser: users.isOfficialGovernmentUser,
+      isGovernmentMember: users.isGovernmentMember,
     })
     .from(users)
     .where(and(...conditions))
     .orderBy(users.username)
     .limit(limit);
 
-  const companyRows = await db
-    .select({
-      ownerUserId: companies.ownerUserId,
-      name: companies.name,
-      username: companies.username,
-    })
-    .from(companies)
-    .where(eq(companies.status, "APPROVED"));
+  // One extra query for the whole page rather than one per person — and
+  // narrowed to the owners actually on this page, so the directory does not
+  // read every approved company in the economy to decorate fifty rows.
+  const ownerIds = rows.map((u) => u.id);
+  const companyRows =
+    ownerIds.length === 0
+      ? []
+      : await db
+          .select({
+            ownerUserId: companies.ownerUserId,
+            name: companies.name,
+            username: companies.username,
+          })
+          .from(companies)
+          .where(
+            and(eq(companies.status, "APPROVED"), inArray(companies.ownerUserId, ownerIds)),
+          );
 
   const byOwner = new Map<string, { name: string; username: string }[]>();
   for (const c of companyRows) {
@@ -139,6 +158,7 @@ export async function searchUsers(query: string, excludeUserId?: string, limit =
   return rows.map((u) => ({
     ...u,
     effectiveStatus: effectiveUserStatus(u),
+    badges: badgesOf(u),
     companies: byOwner.get(u.id) ?? [],
   }));
 }
@@ -327,8 +347,37 @@ export async function getEconomicOverview() {
   };
 }
 
-export async function getAllUsers() {
-  const rows = await db.select().from(users).orderBy(desc(users.createdAt));
+/**
+ * The Government's user list.
+ *
+ * V3 Phase K (spec §45) narrowed this in two ways. It used to be a bare
+ * `select()`, which meant every row carried every column — including
+ * `password_hash` — into a render that shows six fields. Selecting the six
+ * keeps the bcrypt hashes out of the render entirely, which is the right
+ * default whether or not any current caller would have leaked one, and it
+ * roughly halves the bytes the page pulls out of the database.
+ *
+ * It is also bounded now. The list has no pagination UI (it is an
+ * administrative table the Government scans), so the limit is set far above
+ * any realistic roll for this deployment and exists purely so the page can
+ * never try to render an unbounded result set.
+ */
+export async function getAllUsers(limit = 2000) {
+  const rows = await db
+    .select({
+      id: users.id,
+      username: users.username,
+      displayName: users.displayName,
+      balance: users.balance,
+      status: users.status,
+      suspendedUntil: users.suspendedUntil,
+      isOfficialGovernmentUser: users.isOfficialGovernmentUser,
+      isGovernmentMember: users.isGovernmentMember,
+      createdAt: users.createdAt,
+    })
+    .from(users)
+    .orderBy(desc(users.createdAt))
+    .limit(limit);
   return rows.map((u) => ({ ...u, effectiveStatus: effectiveUserStatus(u) }));
 }
 

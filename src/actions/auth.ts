@@ -17,6 +17,15 @@ import {
 } from "@/lib/validators";
 import { recordAudit } from "@/lib/audit";
 import { isUniqueViolation } from "@/lib/db-errors";
+import {
+  consumeRateLimit,
+  loginKey,
+  rateLimitMessage,
+  registerKey,
+  resetRateLimit,
+  LOGIN_RULE,
+  REGISTER_RULE,
+} from "@/lib/ratelimit";
 import { redirect } from "next/navigation";
 
 export type ActionResult<T = undefined> =
@@ -44,6 +53,12 @@ export async function registerAction(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
+  // Before anything else, and before any database work: a registration attempt
+  // that is refused here costs one map lookup instead of a transaction.
+  const rlKey = await registerKey();
+  const rl = consumeRateLimit(rlKey, REGISTER_RULE);
+  if (!rl.allowed) return { ok: false, error: rateLimitMessage(rl) };
+
   const parsed = registerSchema.safeParse({
     username: formData.get("username"),
     password: formData.get("password"),
@@ -126,6 +141,8 @@ export async function registerAction(
     });
 
     await createUserSession({ id: newUserId, username });
+    // A code can only be burnt once, so a success is proof this was not abuse.
+    resetRateLimit(rlKey);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Registration failed." };
   }
@@ -150,6 +167,13 @@ export async function loginAction(
   }
 
   const username = parsed.data.username.trim().toLowerCase();
+
+  // Rate limited per (client, account) so a flood aimed at one account cannot
+  // lock every other account out from the same address.
+  const rlKey = await loginKey(username);
+  const rl = consumeRateLimit(rlKey, LOGIN_RULE);
+  if (!rl.allowed) return { ok: false, error: rateLimitMessage(rl) };
+
   const [user] = await db
     .select()
     .from(users)
@@ -165,7 +189,22 @@ export async function loginAction(
     return { ok: false, error: "Invalid username or password." };
   }
 
-  await createUserSession({ id: user.id, username: user.username });
+  // Correct credentials: clear the counter so earlier typos are forgiven.
+  resetRateLimit(rlKey);
+
+  // The epoch MUST come from the row we just read.
+  //
+  // `createUserSession` defaults it to 0, and `getCurrentUser` rejects any
+  // token whose epoch does not equal `users.session_epoch`. Omitting it here
+  // therefore minted a token stamped 0 for an account whose epoch had been
+  // bumped — which happens to every account after a Government password reset
+  // and after a user changes their own password — and that token was rejected
+  // on the very next request, locking the account out of the app permanently.
+  await createUserSession({
+    id: user.id,
+    username: user.username,
+    sessionEpoch: user.sessionEpoch,
+  });
   redirect("/dashboard");
 }
 
@@ -191,6 +230,12 @@ export async function govLoginAction(
     return { ok: false, error: firstZodError(parsed.error) };
   }
 
+  // The Government account is the highest-value credential in the system and
+  // there is exactly one of it, so it gets the same limiter as a user login.
+  const rlKey = await loginKey(`gov:${parsed.data.username}`);
+  const rl = consumeRateLimit(rlKey, LOGIN_RULE);
+  if (!rl.allowed) return { ok: false, error: rateLimitMessage(rl) };
+
   const [gov] = await db
     .select()
     .from(government)
@@ -206,6 +251,7 @@ export async function govLoginAction(
   const validCode = await verifySecret(parsed.data.securityCode, gov.securityCodeHash);
   if (!validPassword || !validCode) return genericError;
 
+  resetRateLimit(rlKey);
   await createGovSession({ id: gov.id, username: gov.username });
   redirect("/gov");
 }

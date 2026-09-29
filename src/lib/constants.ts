@@ -14,9 +14,17 @@ export const DEFAULT_TAX_RATE_BP = 500; // 5.00%
 export const MAX_TAX_RATE_BP = 10000; // 100%
 export const MIN_TAX_RATE_BP = 0;
 
-export const MAX_ISSUANCE_AMOUNT = 5_000;
+/** V2.1: no longer the runtime source of truth. The live value is
+ * `government.max_issuance_amount`, editable from the Government panel
+ * (src/app/gov/tax). This constant only seeds that column's default (see
+ * drizzle/0004_configurable_policy.sql) and is kept here for reference. */
+export const MAX_ISSUANCE_AMOUNT = 10_000;
 export const MIN_ISSUANCE_AMOUNT = 1;
-export const ISSUANCE_COOLDOWN_DAYS = 7;
+/** V2.1: no longer the runtime source of truth. The live value is
+ * `government.issuance_cooldown_days`, editable from the Government panel
+ * (src/app/gov/tax). This constant only seeds that column's default (see
+ * drizzle/0004_configurable_policy.sql) and is kept here for reference. */
+export const ISSUANCE_COOLDOWN_DAYS = 1;
 
 export const REGISTRATION_CODE_LENGTH = 4;
 
@@ -43,8 +51,13 @@ export const GOV_SESSION_MAX_AGE_SECONDS = 60 * 60 * 8; // 8 hours (tighter for 
 // ---------------------------------------------------------------------------
 
 /** Aeros the Government funds a company with on approval (from the treasury —
- * this is a transfer, never newly created supply). */
-export const COMPANY_APPROVAL_FUNDING_AMOUNT = 5_000;
+ * this is a transfer, never newly created supply).
+ *
+ * V2.1: this is no longer the runtime source of truth. The live value is
+ * `government.company_approval_funding_amount`, editable from the Government
+ * panel (src/app/gov/tax). This constant only seeds that column's default
+ * (see drizzle/0004_configurable_policy.sql) and is kept here for reference. */
+export const COMPANY_APPROVAL_FUNDING_AMOUNT = 3_000;
 
 /** Default tax rate applied to company transactions when the Government has
  * not set a company-specific rate. Configurable from the Government panel. */
@@ -111,3 +124,100 @@ export const MAX_RETENTION_DAYS = 3650;
 /** Phrase the Government must type to confirm a destructive maintenance
  * action. */
 export const MAINTENANCE_CONFIRM_PHRASE = "CONFIRM CLEANUP";
+
+// ---------------------------------------------------------------------------
+// V3 — marketplace (offers, orders), wanted requests, contracts, promotions
+// ---------------------------------------------------------------------------
+
+export const MARKETPLACE_TITLE_MAX_LENGTH = 160;
+export const MARKETPLACE_DESCRIPTION_MAX_LENGTH = 2_000;
+export const MARKETPLACE_CATEGORY_MAX_LENGTH = 60;
+export const MARKETPLACE_MAX_UNIT_PRICE = 1_000_000;
+export const MARKETPLACE_MAX_QUANTITY = 100_000;
+
+/** Days an unsettled order stays live before it lapses. */
+export const MARKETPLACE_ORDER_EXPIRY_DAYS = 7;
+export const MARKETPLACE_BROWSE_PAGE_SIZE = 12;
+
+/**
+ * The order statuses that can still change on their own — the ones an expiry
+ * sweep, a cancellation or an invoice can act on. PAID, COMPLETED, CANCELLED
+ * and EXPIRED are deliberately absent: they are terminal, and the partial
+ * unique indexes that stop duplicate orders use exactly this set.
+ */
+export const MARKETPLACE_OPEN_ORDER_STATUSES = [
+  "PENDING",
+  "ACCEPTED",
+  "WAITING_FOR_INVOICE",
+  "PAYMENT_DUE",
+] as const;
+
+export const WANTED_HEADING_MAX_LENGTH = 160;
+export const WANTED_DESCRIPTION_MAX_LENGTH = 2_000;
+export const WANTED_RESPONSE_MAX_LENGTH = 1_000;
+/** Days a wanted request stays OPEN before it lapses. */
+export const WANTED_EXPIRY_DAYS = 30;
+export const WANTED_MAX_BUDGET = 1_000_000;
+
+export const CONTRACT_TITLE_MAX_LENGTH = 160;
+export const CONTRACT_TEXT_MAX_LENGTH = 2_000;
+export const CONTRACT_PROPOSAL_MAX_LENGTH = 2_000;
+export const CONTRACT_MAX_BUDGET = 1_000_000;
+/** Days a contract stays OPEN for applications before it lapses. */
+export const CONTRACT_EXPIRY_DAYS = 30;
+
+export const PROMOTION_HEADING_MAX_LENGTH = 160;
+export const PROMOTION_DESCRIPTION_MAX_LENGTH = 240;
+export const PROMOTION_CTA_MAX_LENGTH = 48;
+export const PROMOTION_MAX_DURATION_DAYS = 365;
+/** Seeds `government.promotion_daily_rate`; the live value is that column. */
+export const PROMOTION_DEFAULT_DAILY_RATE = 50;
+
+/**
+ * The official promotions the Government may run itself. No company, no
+ * charge — the Treasury is not billing itself.
+ */
+export const OFFICIAL_PROMOTION_KINDS = [
+  "NEW_PLAYER_BONUS",
+  "GOVERNMENT_DEMAND",
+  "LIMITED_OPPORTUNITY",
+] as const;
+export type OfficialPromotionKind = (typeof OFFICIAL_PROMOTION_KINDS)[number];
+
+// ---------------------------------------------------------------------------
+// V3 — ratings, leaderboard, QR (Phase F)
+// ---------------------------------------------------------------------------
+
+export const RATING_MIN_STARS = 1;
+export const RATING_MAX_STARS = 5;
+export const RATING_COMMENT_MAX_LENGTH = 500;
+
+/** Fallback for `retention_settings.rating_comment_retention_days`, which is
+ * the live value. The STAR is permanent; only the comment expires. */
+export const RATING_COMMENT_RETENTION_DAYS = 30;
+
+/**
+ * The leaderboard is a ROLLING WINDOW, computed live on every view.
+ *
+ * There is deliberately no snapshot table, no daily rollup row and no
+ * per-user analytics row anywhere — see src/lib/leaderboard.ts (spec §23).
+ */
+export const LEADERBOARD_WINDOW_DAYS = 30;
+export const LEADERBOARD_SIZE = 20;
+
+/** Pixel size of the inline company QR code. */
+export const COMPANY_QR_PIXEL_SIZE = 220;
+
+// ---------------------------------------------------------------------------
+// V3 — payment sound (Phase H, spec §27)
+// ---------------------------------------------------------------------------
+
+/**
+ * localStorage key holding the per-browser "play the success sound" choice.
+ *
+ * Per-browser ON PURPOSE. There is no column for this on `users`: a sound
+ * preference is not account data, storing it would make it something the
+ * Government could read, and it would then also have to be retained and
+ * reconciled. `localStorage` is exactly the right scope for it.
+ */
+export const PAYMENT_SOUND_STORAGE_KEY = "aeros_payment_sound";

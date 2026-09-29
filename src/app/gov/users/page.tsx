@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { getAllUsers } from "@/lib/queries";
-import { StatusBadge } from "@/components/status-badge";
+import { StatusBadge, UserBadges } from "@/components/status-badge";
+import { badgesOf } from "@/lib/badges";
 import { CURRENCY_NAME } from "@/lib/constants";
+import { formatDate } from "@/lib/datetime";
 
 export default async function GovUsersPage() {
   const allUsers = await getAllUsers();
@@ -17,6 +19,7 @@ export default async function GovUsersPage() {
               <th className="px-4 py-3">Display name</th>
               <th className="px-4 py-3">Balance</th>
               <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Labels</th>
               <th className="px-4 py-3">Registered</th>
             </tr>
           </thead>
@@ -35,14 +38,17 @@ export default async function GovUsersPage() {
                 <td className="px-4 py-3">
                   <StatusBadge status={u.effectiveStatus} />
                 </td>
+                <td className="px-4 py-3">
+                  <UserBadges {...badgesOf(u)} />
+                </td>
                 <td className="px-4 py-3 text-muted">
-                  {new Date(u.createdAt).toLocaleDateString()}
+                  {formatDate(u.createdAt)}
                 </td>
               </tr>
             ))}
             {allUsers.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-muted">
+                <td colSpan={6} className="px-4 py-6 text-center text-muted">
                   No users registered yet.
                 </td>
               </tr>

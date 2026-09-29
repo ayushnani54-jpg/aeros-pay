@@ -31,13 +31,30 @@ import {
   createCompanySchema,
   createInvoiceSchema,
   invoiceIdSchema,
+  invoiceQuoteSchema,
   ipComplaintSchema,
 } from "@/lib/validators";
-import { cancelInvoice, createInvoice, InvoiceError } from "@/lib/invoices";
+import {
+  cancelInvoice,
+  createInvoice,
+  InvoiceError,
+  resolveInvoiceRecipient,
+} from "@/lib/invoices";
+import { db } from "@/db/client";
+import { companyWallet } from "@/lib/wallets";
+import { resolveEffectiveTaxRateBp } from "@/lib/taxmatrix";
+import { computeInvoiceTotals } from "@/lib/tax";
 import { submitComplaint, IpError } from "@/lib/ip";
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { setCompanyContext } from "@/lib/session";
+import { userWallet } from "@/lib/wallets";
+import {
+  consumeRateLimit,
+  financialKey,
+  rateLimitMessage,
+  FINANCIAL_RULE,
+} from "@/lib/ratelimit";
 import type { ActionResult } from "./auth";
 
 function errMsg(e: unknown, fallback: string): string {
@@ -103,9 +120,21 @@ export async function createCompanyAction(
   return { ok: true, data: undefined };
 }
 
-/** Server-side word count, used by the live counter on the form. */
+/**
+ * Server-side word count, used by the live counter on the company form.
+ *
+ * It computes nothing sensitive and reads nothing, but a `"use server"` export
+ * is a public HTTP endpoint, so it still asks for a session rather than being
+ * an unauthenticated compute endpoint anyone can call in a loop. A refusal
+ * returns 0, which the counter renders harmlessly.
+ */
 export async function countDescriptionWordsAction(text: string): Promise<number> {
-  return countWords(text);
+  try {
+    await requireUser();
+  } catch {
+    return 0;
+  }
+  return countWords(String(text ?? "").slice(0, 20_000));
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +156,8 @@ export async function createInvoiceAction(
   }
 
   const parsed = createInvoiceSchema.safeParse({
-    buyerUsername: formData.get("buyerUsername"),
+    recipientType: formData.get("recipientType") ?? "USER",
+    recipientUsername: formData.get("recipientUsername") ?? "",
     itemName: formData.get("itemName"),
     description: formData.get("description") ?? "",
     quantity: formData.get("quantity"),
@@ -140,16 +170,20 @@ export async function createInvoiceAction(
   }
 
   try {
+    // Ownership and approval are re-verified here; the context cookie is only
+    // ever a hint. The recipient is then resolved server-side from the username
+    // plus the explicit recipient type (src/lib/invoices.ts).
     const company = await requireOwnedCompany(ctx.user.id, ctx.company.id);
     await createInvoice({
       company,
-      buyerUsername: parsed.data.buyerUsername,
+      recipientType: parsed.data.recipientType,
+      recipientUsername: parsed.data.recipientUsername,
       itemName: parsed.data.itemName,
       description: parsed.data.description || null,
       quantity: parsed.data.quantity,
       unitPrice: parsed.data.unitPrice,
       note: parsed.data.note || null,
-      dueAt: parsed.data.dueDate ? new Date(parsed.data.dueDate) : null,
+      dueAt: parsed.data.dueDate ? new Date(`${parsed.data.dueDate}T23:59:59`) : null,
     });
   } catch (e) {
     return { ok: false, error: errMsg(e, "Could not create the invoice.") };
@@ -158,6 +192,84 @@ export async function createInvoiceAction(
   revalidatePath("/my-company/invoices");
   revalidatePath("/invoices");
   return { ok: true, data: undefined };
+}
+
+export type InvoiceQuote = {
+  recipientLabel: string;
+  recipientUsername: string;
+  recipientType: "USER" | "COMPANY" | "GOVERNMENT";
+  subtotal: number;
+  taxRateBp: number;
+  taxAmount: number;
+  total: number;
+};
+
+/**
+ * Server-side quote for the create-invoice form.
+ *
+ * The form shows no tax figure of its own: the rate here comes from
+ * `src/lib/taxmatrix.ts` for the REAL resolved pair of wallets and the same
+ * `computeInvoiceTotals` the invoice itself will use, so the number the issuer
+ * sees before sending is the number that gets snapshot onto the row. Nothing is
+ * created and no money moves.
+ */
+export async function quoteInvoiceAction(
+  input: {
+    recipientType: string;
+    recipientUsername: string;
+    quantity: number;
+    unitPrice: number;
+  },
+): Promise<ActionResult<InvoiceQuote>> {
+  let ctx;
+  try {
+    ctx = await requireActingContext();
+  } catch {
+    return { ok: false, error: "You must be logged in." };
+  }
+  if (!ctx.company) {
+    return { ok: false, error: "Switch to your company to quote an invoice." };
+  }
+
+  const parsed = invoiceQuoteSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  try {
+    const company = await requireOwnedCompany(ctx.user.id, ctx.company.id);
+    const recipient = await resolveInvoiceRecipient(db, {
+      recipientType: parsed.data.recipientType,
+      username: parsed.data.recipientUsername,
+    });
+
+    const issuerWallet = companyWallet(company.id);
+    if (recipient.wallet.kind === "COMPANY" && recipient.wallet.id === company.id) {
+      return { ok: false, error: "A company cannot invoice itself." };
+    }
+
+    const taxRateBp = await resolveEffectiveTaxRateBp(db, {
+      payer: recipient.wallet,
+      recipient: issuerWallet,
+      context: "INVOICE_PAYMENT",
+    });
+    const totals = computeInvoiceTotals(parsed.data.quantity * parsed.data.unitPrice, taxRateBp);
+
+    return {
+      ok: true,
+      data: {
+        recipientLabel: recipient.label,
+        recipientUsername: recipient.username,
+        recipientType: recipient.type,
+        subtotal: totals.subtotal,
+        taxRateBp,
+        taxAmount: totals.taxAmount,
+        total: totals.total,
+      },
+    };
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "Could not quote this invoice.") };
+  }
 }
 
 export async function cancelInvoiceAction(
@@ -323,6 +435,9 @@ export async function purchaseCompanyAction(
   } catch {
     return { ok: false, error: "You must be logged in." };
   }
+
+  const rl = consumeRateLimit(financialKey("buy-company", userWallet(user.id)), FINANCIAL_RULE);
+  if (!rl.allowed) return { ok: false, error: rateLimitMessage(rl) };
 
   const parsed = listingIdSchema.safeParse({ listingId: formData.get("listingId") });
   if (!parsed.success) return { ok: false, error: "Invalid request." };
@@ -561,6 +676,9 @@ export async function payInstalmentAction(
   } catch {
     return { ok: false, error: "You must be logged in." };
   }
+
+  const rl = consumeRateLimit(financialKey("pay-instalment", userWallet(user.id)), FINANCIAL_RULE);
+  if (!rl.allowed) return { ok: false, error: rateLimitMessage(rl) };
 
   const instalmentId = String(formData.get("instalmentId") ?? "");
   if (!instalmentId) return { ok: false, error: "Invalid request." };

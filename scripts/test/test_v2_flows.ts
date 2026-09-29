@@ -15,6 +15,7 @@ import {
   loanInstalments,
   loans,
   registrationCodes,
+  transactions,
   users,
 } from "../../src/db/schema";
 import { eq, sql } from "drizzle-orm";
@@ -153,6 +154,24 @@ async function resetFixtures() {
   await db.execute(sql`DELETE FROM company_sale_dismissals`);
   await db.execute(sql`DELETE FROM company_sale_offers`);
   await db.execute(sql`DELETE FROM company_sale_listings`);
+  // V3 marketplace children, deleted before the invoices and companies they
+  // reference. Same blast radius as the lines below it: this teardown already
+  // wipes every invoice and every company in the database, so it has to wipe
+  // the V3 rows that point at them too or the FKs refuse the delete. None of
+  // these tables holds Aeros, so removing them cannot disturb the supply
+  // invariant. (The application itself never deletes any of this.)
+  // `invoices` and `marketplace_orders` reference each other, so one side of
+  // the cycle has to be released before either table can be emptied.
+  await db.execute(sql`UPDATE invoices SET source_order_id = NULL`);
+  await db.execute(sql`UPDATE marketplace_contracts SET invoice_id = NULL`);
+  await db.execute(sql`DELETE FROM marketplace_order_ratings`);
+  await db.execute(sql`DELETE FROM marketplace_orders`);
+  await db.execute(sql`DELETE FROM promotion_campaigns`);
+  await db.execute(sql`DELETE FROM marketplace_offers`);
+  await db.execute(sql`DELETE FROM marketplace_contract_applications`);
+  await db.execute(sql`DELETE FROM marketplace_contracts`);
+  await db.execute(sql`DELETE FROM marketplace_wanted_responses`);
+  await db.execute(sql`DELETE FROM marketplace_wanted_requests`);
   await db.execute(sql`DELETE FROM invoices`);
   await db.execute(sql`DELETE FROM issuance_votes`);
   await db.execute(sql`DELETE FROM issuance_eligible_voters`);
@@ -184,6 +203,12 @@ async function resetFixtures() {
     loanMinCompanyAgeDays: 7,
     loanMinCompanySales: 0,
     loanDefaultGraceDays: 7,
+    // V2.1: these three used to be hardcoded constants; reset them too so a
+    // run that changes one (economy-policy form test) cannot leak into the
+    // next run, same as every other configurable policy field above.
+    companyApprovalFundingAmount: 3000,
+    maxIssuanceAmount: 10000,
+    issuanceCooldownDays: 1,
   });
   await db.execute(
     sql`UPDATE government SET total_supply = 50000 + (SELECT coalesce(sum(balance),0) FROM users)`,
@@ -266,10 +291,17 @@ async function main() {
   });
   const afterApproval = await totals();
 
-  check("company: approval funds exactly 5,000 Aeros", approval.amount === 5000, approval.amount);
+  // V2.1: the funding amount is the live, Government-configurable
+  // government.company_approval_funding_amount (default 3,000, reset by
+  // resetFixtures above) — no longer a hardcoded 5,000.
+  check(
+    "company: approval funds exactly the configured amount (3,000 Aeros)",
+    approval.amount === 3000,
+    approval.amount,
+  );
   check(
     "company: treasury paid the funding (supply unchanged)",
-    afterApproval.treasury === beforeApproval.treasury - 5000 &&
+    afterApproval.treasury === beforeApproval.treasury - 3000 &&
       afterApproval.supply === beforeApproval.supply,
     { beforeApproval, afterApproval },
   );
@@ -279,7 +311,7 @@ async function main() {
   );
 
   const [fundedCo] = await db.select().from(companies).where(eq(companies.id, company.id)).limit(1);
-  check("company: wallet holds the 5,000", fundedCo.balance === 5000, fundedCo.balance);
+  check("company: wallet holds the 3,000", fundedCo.balance === 3000, fundedCo.balance);
   check("company: status is APPROVED", fundedCo.status === "APPROVED", fundedCo.status);
 
   await expectError(
@@ -377,10 +409,25 @@ async function main() {
   check("invoice: supply invariant holds", afterPay.accounted === afterPay.supply);
   check("invoice: marked PAID with a tx reference", paid.invoice.status === "PAID" && !!paid.txRef);
 
-  await expectError(
-    "invoice: paying the same invoice twice is rejected",
-    () => payInvoice({ invoiceId: invoice.id, payerUserId: customer.id }),
-    "already been paid",
+  // V3 (spec §42) SUPERSEDES the V2 expectation here. Paying the same invoice
+  // again used to be an error; it is now IDEMPOTENT — the first receipt is
+  // replayed and nothing is charged a second time. The guarantee that actually
+  // matters (an invoice can never be paid twice) is what is asserted, and it is
+  // asserted more strongly than before: the balance is unchanged AND the ledger
+  // still holds exactly one payment for the invoice.
+  const retry = await payInvoice({ invoiceId: invoice.id, payerUserId: customer.id });
+  const [custAfterRetry] = await db.select().from(users).where(eq(users.id, customer.id)).limit(1);
+  const [ledger] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(transactions)
+    .where(eq(transactions.invoiceId, invoice.id));
+  check(
+    "invoice: paying the same invoice twice replays the first receipt and charges nothing again",
+    retry.replayed === true &&
+      retry.txRef === paid.txRef &&
+      custAfterRetry.balance === custAfterPay.balance &&
+      ledger.count === 1,
+    { retry: retry.txRef, first: paid.txRef, ledgerRows: ledger.count },
   );
 
   const otherInvoice = await createInvoice({
@@ -955,18 +1002,25 @@ async function main() {
     "already been executed",
   );
 
-  // Cooldown.
+  // V2.1: daily IST calendar-day limit (replaces the old rolling 7-day
+  // cooldown) — at most one issuance execution per India Standard Time
+  // calendar day. `request` above was just executed a moment ago, so this
+  // one — created, voted and attempted in the same IST calendar day — must
+  // be blocked. (The "next IST calendar day is allowed again" half of this
+  // rule is covered separately in scripts/test/test_issuance.ts, which
+  // backdates a prior execution's `executedAt` to exercise it without
+  // waiting for a real day to roll over.)
   const request3 = await createIssuanceRequest({
     governmentId: gov.id,
     governmentUsername: gov.username,
     amount: 100,
-    reason: "Cooldown test",
+    reason: "Daily IST limit test",
   });
   for (let i = 0; i < majorityNeeded; i++) {
     await castIssuanceVote({ requestId: request3.id, userId: voters[i].id, vote: "APPROVE" });
   }
   await expectError(
-    "issuance: the 7-day cooldown blocks a second execution",
+    "issuance: the daily IST calendar-day limit blocks a second execution the same day",
     () =>
       executeIssuance({
         requestId: request3.id,

@@ -167,6 +167,14 @@ export default async function ControlRoomPage({ searchParams }: PageProps<"/gov/
               ? "Balanced — every Aeros in existence is accounted for."
               : "MISMATCH — investigate immediately."}
           </p>
+          <p className="mt-3 text-sm text-muted">
+            The supply figures above are one of the checks on the{" "}
+            <Link href="/gov/health" className="underline">
+              system health page
+            </Link>
+            , which runs the full reconciliation — orders, ratings, promotions, contracts, loans,
+            invoices and ownership — and shows the database&rsquo;s size and temporary-row counts.
+          </p>
         </section>
       )}
 
@@ -190,6 +198,9 @@ export default async function ControlRoomPage({ searchParams }: PageProps<"/gov/
           </Link>
           <Link href="/gov/retention" className="btn btn-secondary text-sm">
             Data retention
+          </Link>
+          <Link href="/gov/health" className="btn btn-secondary text-sm">
+            System health
           </Link>
         </div>
       </section>

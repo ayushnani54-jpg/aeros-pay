@@ -1,5 +1,7 @@
 import { searchTransactions } from "@/lib/queries";
 import { TransactionRow } from "@/components/transaction-row";
+import { GovReverseTransactionForm } from "@/components/forms/gov-marketplace-forms";
+import { reversedTransactionIds } from "@/lib/reversals";
 import { CURRENCY_NAME } from "@/lib/constants";
 
 const TX_TYPES = [
@@ -20,7 +22,27 @@ const TX_TYPES = [
   "COMPANY_ADJUSTMENT_CREDIT",
   "COMPANY_ADJUSTMENT_DEBIT",
   "ISSUANCE_CREDIT",
+  // --- V3 ---
+  "MARKETPLACE_PAYMENT",
+  "CONTRACT_PAYMENT",
+  "PROMOTION_CHARGE",
+  "GOVERNMENT_ON_BEHALF",
+  "TRANSACTION_REVERSAL",
+  "TRANSACTION_ADJUSTMENT",
 ];
+
+/** Movements that can meaningfully be put right with a reversal (spec §18). */
+const REVERSIBLE_TYPES = new Set([
+  "TRANSFER",
+  "COMPANY_SALE",
+  "COMPANY_PAYMENT",
+  "INVOICE_PAYMENT",
+  "MARKETPLACE_PAYMENT",
+  "CONTRACT_PAYMENT",
+  "PROMOTION_CHARGE",
+  "GOVERNMENT_PAYMENT",
+  "GOVERNMENT_RECEIPT",
+]);
 
 export default async function GovTransactionsPage({
   searchParams,
@@ -43,12 +65,18 @@ export default async function GovTransactionsPage({
   const totalGross = rows.reduce((sum, t) => sum + t.grossAmount, 0);
   const totalTax = rows.reduce((sum, t) => sum + t.taxAmount, 0);
 
+  // Which of these have already been put right. A reversal is a NEW row
+  // pointing at the original, so this is a lookup rather than a flag on the
+  // original — nothing about a settled transaction is ever edited.
+  const reversedIds = await reversedTransactionIds(rows.map((tx) => tx.id));
+
   return (
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Transactions</h1>
         <p className="mt-1 text-sm text-muted">
-          The complete ledger. Records are permanent and can never be edited or deleted.
+          The complete ledger. Records are permanent and can never be edited or deleted — a
+          correction is a NEW transaction linked to the one it undoes.
         </p>
       </div>
 
@@ -93,7 +121,26 @@ export default async function GovTransactionsPage({
       ) : (
         <div className="card divide-y divide-border px-5">
           {rows.map((tx) => (
-            <TransactionRow key={tx.id} tx={tx} />
+            <div key={tx.id} className="py-1">
+              <TransactionRow tx={tx} />
+              <div className="pb-3">
+                {tx.reversesTransactionId ? (
+                  <p className="text-xs text-muted">
+                    This row reverses an earlier transaction.
+                  </p>
+                ) : reversedIds.has(tx.id) ? (
+                  <p className="text-xs text-muted">
+                    Already reversed by a later transaction. The row above is unchanged.
+                  </p>
+                ) : REVERSIBLE_TYPES.has(tx.type) ? (
+                  <GovReverseTransactionForm
+                    transactionId={tx.id}
+                    txRef={tx.txRef}
+                    netAmount={tx.netAmount}
+                  />
+                ) : null}
+              </div>
+            </div>
           ))}
         </div>
       )}

@@ -12,15 +12,21 @@ import { getOpenComplaintCount } from "@/lib/ip";
 import { getAllOpenListings, getPendingOfferCount } from "@/lib/sales";
 import { getAllIssuanceRequests } from "@/lib/queries";
 import { healExpiredSuspensions } from "@/lib/status";
+import { runDueCleanupLazily } from "@/lib/retention";
 import { TransactionRow } from "@/components/transaction-row";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { formatTaxRateBp } from "@/lib/tax";
 
 export default async function GovDashboard() {
-  // Keep derived state current without a scheduler.
+  // Keep derived state current even if the daily scheduled job never fires.
+  // `runDueCleanupLazily` claims at most ONE automatic run per IST calendar
+  // day with a single conditional UPDATE, so this costs one cheap query on
+  // every load but a real sweep only once a day — and the app stays correct
+  // on a host with no scheduler at all.
   await Promise.all([
     healExpiredSuspensions().catch(() => undefined),
     runLoanMaintenance().catch(() => undefined),
+    runDueCleanupLazily().catch(() => undefined),
   ]);
 
   const [

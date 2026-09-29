@@ -6,6 +6,7 @@ import {
   sendSupportMessageAction,
   setSupportStatusAction,
 } from "@/actions/support";
+import { VoiceInput } from "./voice-input";
 
 export function SupportMessageForm() {
   const [state, formAction, pending] = useActionState(sendSupportMessageAction, null);
@@ -24,6 +25,7 @@ export function SupportMessageForm() {
         maxLength={2000}
         placeholder="Ask a question or report a problem…"
       />
+      <VoiceInput targetId="supportBody" />
       {state && !state.ok && <p className="text-sm text-danger">{state.error}</p>}
       {state?.ok && <p className="text-sm text-success">Message sent.</p>}
       <button type="submit" className="btn btn-primary" disabled={pending}>
@@ -43,6 +45,7 @@ export function SupportReplyForm({ threadId }: { threadId: string }) {
         Reply
       </label>
       <textarea id="replyBody" name="body" className="input" rows={4} required maxLength={2000} />
+      <VoiceInput targetId="replyBody" />
       {state && !state.ok && <p className="text-sm text-danger">{state.error}</p>}
       {state?.ok && <p className="text-sm text-success">Reply sent.</p>}
       <button type="submit" className="btn btn-primary" disabled={pending}>

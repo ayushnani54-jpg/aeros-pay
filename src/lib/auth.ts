@@ -56,12 +56,36 @@ export const getCurrentGovernment = cache(async function getCurrentGovernment():
   return gov ?? null;
 });
 
-/** Throws if there is no authenticated user. Use in server actions
- * and server components that require a logged-in normal user. */
+/**
+ * Throws if there is no authenticated user, OR if that user is banned.
+ *
+ * WHY THE BAN CHECK LIVES HERE (V3 Phase K, spec §§9,43)
+ * ---------------------------------------------------------------------------
+ * A banned account keeps its data and can still sign in to READ its own record
+ * and the ban reason — that is what `getCurrentUser` and the `/banned` page are
+ * for. What it must not do is ACT.
+ *
+ * Before this, "cannot act" was enforced by the `(app)` layout redirecting to
+ * `/banned`. A layout is a render, not a boundary: Server Actions are directly
+ * callable HTTP endpoints that never run a layout, so a banned account could
+ * still post ratings and support messages, create marketplace listings and
+ * contracts, accept and complete orders, request promotions and issue
+ * invoices. The financial paths were safe (`canUserSend` is checked inside
+ * `payments.ts`), but everything non-financial was not.
+ *
+ * `requireUser` and `requireActingContext` are used ONLY by the write surface —
+ * every server action and the user export route — while every page reads
+ * through `getCurrentUser` / `getActingContext`. So putting the check here
+ * closes the whole class in one place, and the read-only `/banned` page keeps
+ * working exactly as before.
+ */
 export async function requireUser(): Promise<User> {
   const user = await getCurrentUser();
   if (!user) {
     throw new Error("NOT_AUTHENTICATED");
+  }
+  if (effectiveUserStatus(user) === "BANNED") {
+    throw new Error("ACCOUNT_BANNED");
   }
   return user;
 }
@@ -152,9 +176,12 @@ export const getActingContext = cache(async function getActingContext(): Promise
   };
 });
 
+/** The acting wallet for a WRITE. Refuses a banned account — see the note on
+ * `requireUser` for why the check belongs here and not in a layout. */
 export async function requireActingContext(): Promise<ActingContext> {
   const ctx = await getActingContext();
   if (!ctx) throw new Error("NOT_AUTHENTICATED");
+  if (ctx.effectiveStatus === "BANNED") throw new Error("ACCOUNT_BANNED");
   return ctx;
 }
 

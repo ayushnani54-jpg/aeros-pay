@@ -4,6 +4,7 @@ import { getApprovalProgress } from "@/lib/issuance";
 import { IssuanceStatusBadge } from "@/components/status-badge";
 import { ExecuteIssuanceButton } from "@/components/forms/execute-issuance-button";
 import { CURRENCY_NAME } from "@/lib/constants";
+import { formatDateTime } from "@/lib/datetime";
 
 export default async function GovIssuanceDetailPage({
   params,
@@ -62,7 +63,7 @@ export default async function GovIssuanceDetailPage({
         )}
         {request.status === "EXECUTED" && (
           <p className="mt-4 text-sm text-success">
-            Executed {request.executedAt ? new Date(request.executedAt).toLocaleString() : ""} —
+            Executed {request.executedAt ? formatDateTime(request.executedAt) : ""} —
             ref {request.executedTxRef}
           </p>
         )}

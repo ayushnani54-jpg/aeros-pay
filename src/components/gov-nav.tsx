@@ -18,6 +18,8 @@ const NAV_ITEMS = [
   { href: "/gov/tax", label: "Taxes" },
   { href: "/gov/loans", label: "Loans" },
   { href: "/gov/sales", label: "Sales" },
+  { href: "/gov/contracts", label: "Contracts" },
+  { href: "/gov/promotions", label: "Promotions" },
   { href: "/gov/issuance", label: "Issuance" },
   { href: "/gov/payments", label: "Payments" },
   { href: "/gov/support", label: "Support" },
@@ -27,6 +29,8 @@ const NAV_ITEMS = [
   { href: "/gov/codes", label: "Codes" },
   { href: "/gov/control-room", label: "Control Room" },
   { href: "/gov/retention", label: "Retention" },
+  { href: "/gov/health", label: "Health" },
+  { href: "/gov/exports", label: "Exports" },
 ];
 
 function isActive(pathname: string, href: string): boolean {

@@ -1,24 +1,54 @@
 import Link from "next/link";
-import { getCurrentUser } from "@/lib/auth";
-import { getInvoicesForBuyer, expireOverdueInvoices } from "@/lib/invoices";
+import { getActingContext } from "@/lib/auth";
+import { getReceivedInvoicesForWallet, expireOverdueInvoices } from "@/lib/invoices";
 import { InvoiceStatusBadge } from "@/components/status-badge";
 import { CURRENCY_NAME } from "@/lib/constants";
+import { formatDate } from "@/lib/datetime";
+import { ExportLink } from "@/components/forms/export-forms";
 
+/**
+ * RECEIVED INVOICES (spec §7).
+ *
+ * Scoped to the wallet the viewer is currently acting as, so a company owner
+ * sees their personal bills on the personal wallet and the company's bills when
+ * acting as the company. Same cards and same list rows as V2 — this page gained
+ * a wallet scope, not a new look.
+ */
 export default async function InvoicesPage() {
-  const user = await getCurrentUser();
-  if (!user) return null;
+  const ctx = await getActingContext();
+  if (!ctx) return null;
 
   await expireOverdueInvoices().catch(() => undefined);
-  const rows = await getInvoicesForBuyer(user.id, 150);
+  const rows = await getReceivedInvoicesForWallet(ctx.wallet, 150);
 
   const pending = rows.filter((r) => r.invoice.status === "PENDING");
   const settled = rows.filter((r) => r.invoice.status !== "PENDING");
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Invoices</h1>
-        <p className="mt-1 text-sm text-muted">Bills sent to you by companies.</p>
+        <h1 className="text-2xl font-semibold tracking-tight">Received invoices</h1>
+        <p className="mt-1 text-sm text-muted">
+          Bills sent to {ctx.company ? `${ctx.company.name} (${ctx.handle})` : "you"} by companies.
+        </p>
+        {ctx.availableCompanies.length > 0 && (
+          <Link
+            href="/my-company/invoices"
+            className="mt-2 inline-block text-sm text-muted hover:text-foreground"
+          >
+            Sent invoices →
+          </Link>
+        )}
+        </div>
+        <ExportLink
+          href={
+            ctx.company
+              ? "/api/export/invoices?scope=company&format=csv"
+              : "/api/export/invoices?format=csv"
+          }
+          label="Download CSV"
+        />
       </div>
 
       <section className="space-y-3">
@@ -38,7 +68,7 @@ export default async function InvoicesPage() {
                   </p>
                   {invoice.dueAt && (
                     <p className="mt-1 text-xs text-muted">
-                      Due {new Date(invoice.dueAt).toLocaleDateString()}
+                      Due {formatDate(invoice.dueAt)}
                     </p>
                   )}
                 </div>
@@ -68,7 +98,7 @@ export default async function InvoicesPage() {
                   <p className="font-medium">{invoice.itemName}</p>
                   <p className="text-xs text-muted">
                     {companyName} · {invoice.invoiceNumber} ·{" "}
-                    {new Date(invoice.createdAt).toLocaleDateString()}
+                    {formatDate(invoice.createdAt)}
                   </p>
                 </div>
                 <div className="text-right">

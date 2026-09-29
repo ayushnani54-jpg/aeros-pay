@@ -3,14 +3,21 @@ import { notFound } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getUserByUsername } from "@/lib/queries";
 import { getCompaniesForOwner } from "@/lib/companies";
-import { StatusBadge } from "@/components/status-badge";
+import { StatusBadge, UserBadges } from "@/components/status-badge";
+import { badgesOf } from "@/lib/badges";
 import { effectiveUserStatus } from "@/lib/status";
+import { formatDate } from "@/lib/datetime";
 
 /**
  * Public user profile.
  *
  * Deliberately shows no balance and no transaction history — private
  * financial data stays with the account owner and the Government (spec §30).
+ *
+ * V3 Phase G: it also shows the Government's identity labels, if any. They are
+ * LABELS — rendering them here is the only thing they do. Nothing about what
+ * this account may do is derived from them, and no authorization check anywhere
+ * reads the columns (src/lib/badges.ts).
  */
 export default async function PublicUserProfile({ params }: PageProps<"/u/[username]">) {
   const viewer = await getCurrentUser();
@@ -25,6 +32,7 @@ export default async function PublicUserProfile({ params }: PageProps<"/u/[usern
   );
   const status = effectiveUserStatus(person);
   const isSelf = person.id === viewer.id;
+  const badges = badgesOf(person);
 
   return (
     <div className="space-y-5">
@@ -37,13 +45,26 @@ export default async function PublicUserProfile({ params }: PageProps<"/u/[usern
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">{person.displayName}</h1>
             <p className="mt-1 font-mono text-sm text-muted">@{person.username}</p>
+            <div className="mt-2">
+              <UserBadges official={badges.official} member={badges.member} />
+            </div>
           </div>
           <StatusBadge status={status} />
         </div>
 
         <p className="mt-4 text-sm text-muted">
-          Member since {new Date(person.createdAt).toLocaleDateString()}
+          Member since {formatDate(person.createdAt)}
         </p>
+
+        {(badges.official || badges.member) && (
+          <p className="mt-2 text-xs text-muted">
+            {badges.official
+              ? "Linked by the Government as an Official Government User."
+              : "Tagged by the Government as a Government Member."}{" "}
+            This is a label only — it grants no administrative powers, and this account trades
+            like any other.
+          </p>
+        )}
 
         {!isSelf && status !== "BANNED" && (
           <Link href={`/pay?to=${person.username}`} className="btn btn-primary mt-5 inline-block">

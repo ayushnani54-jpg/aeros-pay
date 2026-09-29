@@ -1,6 +1,7 @@
 import { getAllRegistrationCodes } from "@/lib/queries";
 import { CodeStatusBadge } from "@/components/status-badge";
 import { GenerateCodeButton, RevokeCodeButton } from "@/components/forms/registration-code-actions";
+import { formatDateTime } from "@/lib/datetime";
 
 export default async function GovCodesPage() {
   const codes = await getAllRegistrationCodes();
@@ -33,9 +34,9 @@ export default async function GovCodesPage() {
                 <td className="px-4 py-3">
                   <CodeStatusBadge status={c.status} />
                 </td>
-                <td className="px-4 py-3 text-muted">{new Date(c.createdAt).toLocaleString()}</td>
+                <td className="px-4 py-3 text-muted">{formatDateTime(c.createdAt)}</td>
                 <td className="px-4 py-3 text-muted">
-                  {c.usedAt ? new Date(c.usedAt).toLocaleString() : "—"}
+                  {c.usedAt ? formatDateTime(c.usedAt) : "—"}
                 </td>
                 <td className="px-4 py-3">
                   {c.status === "UNUSED" && <RevokeCodeButton codeId={c.id} />}

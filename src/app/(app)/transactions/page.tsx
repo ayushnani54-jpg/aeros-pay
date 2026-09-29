@@ -1,6 +1,7 @@
 import { getActingContext } from "@/lib/auth";
 import { getTransactionsForWallet } from "@/lib/queries";
 import { TransactionRow } from "@/components/transaction-row";
+import { ExportLink } from "@/components/forms/export-forms";
 
 export default async function TransactionsPage() {
   const ctx = await getActingContext();
@@ -15,12 +16,26 @@ export default async function TransactionsPage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Activity</h1>
-        <p className="mt-1 text-sm text-muted">
-          Every payment for {company ? company.name : "your personal wallet"} ({ctx.handle}).
-          Records here are permanent and can never be edited.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Activity</h1>
+          <p className="mt-1 text-sm text-muted">
+            Every payment for {company ? company.name : "your personal wallet"} ({ctx.handle}).
+            Records here are permanent and can never be edited.
+          </p>
+        </div>
+        {/* Scope comes from the session, never from this link: the same URL
+            downloads the company's history when a company wallet is active and
+            the person's own when it is not. */}
+        <ExportLink
+          href={
+            company
+              ? "/api/export/transactions?scope=company&format=csv"
+              : "/api/export/transactions?format=csv"
+          }
+          label="Download CSV"
+          testId="download-transactions-csv"
+        />
       </div>
 
       {transactions.length === 0 ? (

@@ -17,6 +17,7 @@ import { transferInTx } from "./payments";
 import { governmentWallet, userWallet } from "./wallets";
 import { effectiveCompanyStatus } from "./status";
 import { isUniqueViolation } from "./db-errors";
+import { istCalendarDaysBetween, startOfIstDay } from "./datetime";
 import type { Company, CompanySaleListing, CompanySaleOffer } from "@/db/schema";
 
 /**
@@ -97,6 +98,13 @@ export type SaleEligibility = {
 /**
  * A company may be listed only once it has been approved for a full
  * `saleMinCompanyAgeDays` (default 7 days).
+ *
+ * Measured in IST CALENDAR days, not elapsed hours: a company approved at
+ * 11pm IST becomes eligible on the IST calendar day `minAgeDays` later, at
+ * IST midnight — not 7×24 hours after the exact approval instant. This keeps
+ * the rule consistent with every other day-boundary check in the app (the
+ * daily issuance limit, loan reminder staging) and with what a viewer sees
+ * displayed, since all timestamps are shown in IST.
  */
 export function checkListingEligibility(
   company: Company,
@@ -111,11 +119,12 @@ export function checkListingEligibility(
   }
 
   const approvedAt = company.reviewedAt ?? company.createdAt;
-  const eligibleFrom = new Date(approvedAt.getTime() + minAgeDays * 24 * 60 * 60 * 1000);
+  const eligibleFrom = new Date(
+    startOfIstDay(approvedAt).getTime() + minAgeDays * 24 * 60 * 60 * 1000,
+  );
 
   if (now.getTime() < eligibleFrom.getTime()) {
-    const msRemaining = eligibleFrom.getTime() - now.getTime();
-    const daysRemaining = Math.ceil(msRemaining / (24 * 60 * 60 * 1000));
+    const daysRemaining = Math.max(0, minAgeDays - istCalendarDaysBetween(approvedAt, now));
     return {
       eligible: false,
       reason: `A company can only be listed for sale ${minAgeDays} full days after approval.`,

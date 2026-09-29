@@ -8,11 +8,14 @@ import {
   BanUserForm,
   ResetPasswordForm,
   TimedSuspendForm,
+  UserBadgeForm,
 } from "@/components/forms/gov-forms";
-import { CompanyStatusBadge, StatusBadge } from "@/components/status-badge";
+import { CompanyStatusBadge, StatusBadge, UserBadges } from "@/components/status-badge";
+import { badgesOf } from "@/lib/badges";
 import { TransactionRow } from "@/components/transaction-row";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { formatSuspensionRemaining } from "@/lib/status";
+import { formatDateTime } from "@/lib/datetime";
 
 export default async function GovUserDetail({ params }: PageProps<"/gov/users/[id]">) {
   const { id } = await params;
@@ -20,6 +23,7 @@ export default async function GovUserDetail({ params }: PageProps<"/gov/users/[i
   if (!profile) notFound();
 
   const { user } = profile;
+  const badges = badgesOf(user);
 
   return (
     <div className="space-y-6">
@@ -31,6 +35,9 @@ export default async function GovUserDetail({ params }: PageProps<"/gov/users/[i
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">{user.displayName}</h1>
             <p className="mt-1 font-mono text-sm text-muted">@{user.username}</p>
+            <div className="mt-2">
+              <UserBadges official={badges.official} member={badges.member} />
+            </div>
           </div>
           <StatusBadge status={user.effectiveStatus} />
         </div>
@@ -46,20 +53,20 @@ export default async function GovUserDetail({ params }: PageProps<"/gov/users/[i
       <section className="card p-5">
         <h2 className="mb-3 font-medium">Account</h2>
         <dl className="space-y-1 text-sm">
-          <Row label="Registered" value={new Date(user.createdAt).toLocaleString()} />
+          <Row label="Registered" value={formatDateTime(user.createdAt)} />
           <Row label="Stored status" value={user.status} />
           <Row label="Effective status" value={user.effectiveStatus} />
           {user.suspendedUntil && (
             <Row
               label="Suspended until"
-              value={`${new Date(user.suspendedUntil).toLocaleString()} (${formatSuspensionRemaining(user.suspendedUntil)} left)`}
+              value={`${formatDateTime(user.suspendedUntil)} (${formatSuspensionRemaining(user.suspendedUntil)} left)`}
             />
           )}
           {user.suspensionReason && <Row label="Suspension reason" value={user.suspensionReason} />}
           {user.bannedAt && (
             <Row
               label="Banned"
-              value={`${new Date(user.bannedAt).toLocaleString()} by ${user.bannedBy ?? "—"}`}
+              value={`${formatDateTime(user.bannedAt)} by ${user.bannedBy ?? "—"}`}
             />
           )}
           {user.banReason && <Row label="Ban reason" value={user.banReason} />}
@@ -67,7 +74,7 @@ export default async function GovUserDetail({ params }: PageProps<"/gov/users/[i
             label="Password last changed"
             value={
               user.passwordUpdatedAt
-                ? new Date(user.passwordUpdatedAt).toLocaleString()
+                ? formatDateTime(user.passwordUpdatedAt)
                 : "never"
             }
           />
@@ -97,6 +104,25 @@ export default async function GovUserDetail({ params }: PageProps<"/gov/users/[i
       <section className="card p-5">
         <h2 className="mb-3 font-medium">Password</h2>
         <ResetPasswordForm userId={user.id} />
+      </section>
+
+      <section className="card p-5">
+        <h2 className="mb-1 font-medium">Identity labels</h2>
+        <p className="mb-3 text-sm text-muted">
+          Link this account as an Official Government User, or tag it as a Government Member.
+          Labels only — see below.
+        </p>
+        <UserBadgeForm
+          userId={user.id}
+          official={badges.official}
+          member={badges.member}
+        />
+        {user.badgesUpdatedAt && (
+          <p className="mt-3 text-xs text-muted">
+            Last changed {formatDateTime(user.badgesUpdatedAt)}
+            {user.badgesUpdatedBy ? ` by ${user.badgesUpdatedBy}` : ""}.
+          </p>
+        )}
       </section>
 
       <section className="grid gap-3 sm:grid-cols-2">
@@ -178,7 +204,7 @@ export default async function GovUserDetail({ params }: PageProps<"/gov/users/[i
               <div key={log.id} className="py-3 text-sm">
                 <p className="font-medium">{log.action.replace(/_/g, " ")}</p>
                 <p className="text-xs text-muted">
-                  {log.actorLabel} · {new Date(log.createdAt).toLocaleString()}
+                  {log.actorLabel} · {formatDateTime(log.createdAt)}
                   {log.previousValue || log.newValue
                     ? ` · ${log.previousValue ?? "—"} → ${log.newValue ?? "—"}`
                     : ""}
@@ -200,7 +226,7 @@ export default async function GovUserDetail({ params }: PageProps<"/gov/users/[i
               <div key={n.id} className="py-2 text-sm">
                 <p>{n.message}</p>
                 <p className="text-xs text-muted">
-                  {new Date(n.createdAt).toLocaleString()}
+                  {formatDateTime(n.createdAt)}
                 </p>
               </div>
             ))}

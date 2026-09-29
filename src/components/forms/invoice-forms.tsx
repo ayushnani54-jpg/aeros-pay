@@ -1,20 +1,76 @@
 "use client";
 
-import { useActionState, useState } from "react";
-import { createInvoiceAction, cancelInvoiceAction } from "@/actions/company";
+import { useActionState, useEffect, useState, useTransition } from "react";
+import {
+  createInvoiceAction,
+  cancelInvoiceAction,
+  quoteInvoiceAction,
+  type InvoiceQuote,
+} from "@/actions/company";
 import { payInvoiceAction } from "@/actions/invoice";
 import { CURRENCY_NAME } from "@/lib/constants";
+import { PaymentSuccessSound } from "@/components/payment-sound";
+import { VoiceInput } from "./voice-input";
 
-export function CreateInvoiceForm({ taxPercent }: { taxPercent: number }) {
+type RecipientType = "USER" | "COMPANY" | "GOVERNMENT";
+
+const RECIPIENT_TABS: { value: RecipientType; label: string }[] = [
+  { value: "USER", label: "A person" },
+  { value: "COMPANY", label: "A company" },
+  { value: "GOVERNMENT", label: "The Government" },
+];
+
+/**
+ * Create-invoice form (V3: any of the three recipient types).
+ *
+ * The tax figure shown here is not computed in the browser. It comes from
+ * `quoteInvoiceAction`, which resolves the recipient server-side and asks the
+ * tax matrix for the rate that will actually be snapshot onto the invoice — so
+ * the issuer is never shown a number the server would disagree with.
+ */
+export function CreateInvoiceForm() {
   const [state, formAction, pending] = useActionState(createInvoiceAction, null);
+  const [recipientType, setRecipientType] = useState<RecipientType>("USER");
+  const [recipientUsername, setRecipientUsername] = useState("");
   const [quantity, setQuantity] = useState<number | "">(1);
   const [unitPrice, setUnitPrice] = useState<number | "">("");
+
+  const [quote, setQuote] = useState<InvoiceQuote | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quoting, startQuote] = useTransition();
 
   const q = typeof quantity === "number" ? quantity : 0;
   const p = typeof unitPrice === "number" ? unitPrice : 0;
   const subtotal = q * p;
-  const tax = Math.floor((subtotal * taxPercent * 100) / 10000);
-  const total = subtotal + tax;
+  const recipientReady = recipientType === "GOVERNMENT" || recipientUsername.length >= 3;
+
+  // Asks the server for the real quote once the fields make sense. Debounced so
+  // typing a username does not fire a request per keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!recipientReady || q < 1 || p < 1) {
+        setQuote(null);
+        setQuoteError(null);
+        return;
+      }
+      startQuote(async () => {
+        const result = await quoteInvoiceAction({
+          recipientType,
+          recipientUsername,
+          quantity: q,
+          unitPrice: p,
+        });
+        if (result.ok) {
+          setQuote(result.data);
+          setQuoteError(null);
+        } else {
+          setQuote(null);
+          setQuoteError(result.error);
+        }
+      });
+    }, 450);
+    return () => clearTimeout(timer);
+  }, [recipientType, recipientUsername, q, p, recipientReady]);
 
   return (
     <form action={formAction} className="card space-y-4 p-6">
@@ -25,12 +81,51 @@ export function CreateInvoiceForm({ taxPercent }: { taxPercent: number }) {
         </p>
       </div>
 
+      <input type="hidden" name="recipientType" value={recipientType} />
+
       <div>
-        <label htmlFor="buyerUsername" className="mb-1 block text-sm font-medium">
-          Send to (username)
-        </label>
-        <input id="buyerUsername" name="buyerUsername" className="input" required maxLength={24} />
+        <label className="mb-1 block text-sm font-medium">Invoice</label>
+        <div className="flex flex-wrap gap-2">
+          {RECIPIENT_TABS.map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => setRecipientType(tab.value)}
+              className={
+                recipientType === tab.value
+                  ? "btn btn-primary text-xs"
+                  : "btn btn-secondary text-xs"
+              }
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {recipientType === "GOVERNMENT" ? (
+        <p className="rounded-md bg-surface p-3 text-sm text-muted">
+          This invoice will be addressed to the Government Treasury. Payment settles from the
+          Treasury to your company wallet.
+        </p>
+      ) : (
+        <div>
+          <label htmlFor="recipientUsername" className="mb-1 block text-sm font-medium">
+            Send to ({recipientType === "COMPANY" ? "company username" : "username"})
+          </label>
+          <input
+            id="recipientUsername"
+            name="recipientUsername"
+            className="input"
+            required
+            maxLength={24}
+            value={recipientUsername}
+            onChange={(e) =>
+              setRecipientUsername(e.target.value.trim().toLowerCase().replace(/^@/, ""))
+            }
+          />
+        </div>
+      )}
 
       <div>
         <label htmlFor="itemName" className="mb-1 block text-sm font-medium">
@@ -51,6 +146,7 @@ export function CreateInvoiceForm({ taxPercent }: { taxPercent: number }) {
           Description (optional)
         </label>
         <textarea id="invDescription" name="description" className="input" rows={2} maxLength={1000} />
+        <VoiceInput targetId="invDescription" />
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -100,24 +196,39 @@ export function CreateInvoiceForm({ taxPercent }: { taxPercent: number }) {
               {subtotal.toLocaleString()} {CURRENCY_NAME}
             </dd>
           </div>
-          <div className="flex justify-between">
-            <dt className="text-muted">Tax ({taxPercent.toFixed(2)}%)</dt>
-            <dd>
-              {tax.toLocaleString()} {CURRENCY_NAME}
-            </dd>
-          </div>
-          <div className="flex justify-between border-t border-border pt-1 font-medium">
-            <dt>Total payable by buyer</dt>
-            <dd>
-              {total.toLocaleString()} {CURRENCY_NAME}
-            </dd>
-          </div>
-          <div className="flex justify-between text-xs text-muted">
-            <dt>You receive</dt>
-            <dd>
-              {subtotal.toLocaleString()} {CURRENCY_NAME}
-            </dd>
-          </div>
+          {quote ? (
+            <>
+              <div className="flex justify-between">
+                <dt className="text-muted">Tax ({(quote.taxRateBp / 100).toFixed(2)}%)</dt>
+                <dd>
+                  {quote.taxAmount.toLocaleString()} {CURRENCY_NAME}
+                </dd>
+              </div>
+              <div className="flex justify-between border-t border-border pt-1 font-medium">
+                <dt>Total payable by {quote.recipientLabel}</dt>
+                <dd>
+                  {quote.total.toLocaleString()} {CURRENCY_NAME}
+                </dd>
+              </div>
+              <div className="flex justify-between text-xs text-muted">
+                <dt>You receive</dt>
+                <dd>
+                  {quote.subtotal.toLocaleString()} {CURRENCY_NAME}
+                </dd>
+              </div>
+            </>
+          ) : (
+            <div className="flex justify-between text-xs text-muted">
+              <dt>Tax and total</dt>
+              <dd>
+                {quoting
+                  ? "Checking with the server…"
+                  : quoteError
+                    ? quoteError
+                    : "Enter a recipient to see the tax"}
+              </dd>
+            </div>
+          )}
         </dl>
       )}
 
@@ -146,15 +257,28 @@ export function CreateInvoiceForm({ taxPercent }: { taxPercent: number }) {
   );
 }
 
+/**
+ * Pay Invoice.
+ *
+ * There is NO optimistic success anywhere here: the receipt is rendered only
+ * from `state.data`, which only exists once the server has committed the
+ * payment and handed back a real transaction reference (spec §47). The confirm
+ * button is disabled while the action is in flight, and because Next dispatches
+ * one action at a time per client a double click cannot outrun the first
+ * request — and if it somehow does, the server's idempotency key replays the
+ * first result rather than paying twice.
+ */
 export function PayInvoiceButton({
   invoiceId,
   total,
-  companyName,
+  issuerName,
+  payerLabel,
   canAfford,
 }: {
   invoiceId: string;
   total: number;
-  companyName: string;
+  issuerName: string;
+  payerLabel: string;
   canAfford: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -162,12 +286,25 @@ export function PayInvoiceButton({
 
   if (state?.ok) {
     return (
-      <div className="card p-5 text-center">
+      <div className="card p-5 text-center" data-testid="invoice-receipt">
+        {/* Only a payment that actually happened sounds. A REPLAYED receipt is
+            the idempotency key returning the original one — nothing moved this
+            time, so there is nothing to celebrate. */}
+        {!state.data.replayed && <PaymentSuccessSound key={state.data.txRef} />}
         <p className="font-semibold text-success">Invoice paid</p>
         <p className="mt-2 text-sm">
           {state.data.invoiceNumber} · {state.data.total.toLocaleString()} {CURRENCY_NAME}
         </p>
+        <p className="mt-1 text-xs text-muted">
+          Paid to @{state.data.paidToUsername} · tax {state.data.taxAmount.toLocaleString()}{" "}
+          {CURRENCY_NAME}
+        </p>
         <p className="mt-1 font-mono text-xs text-muted">Ref {state.data.txRef}</p>
+        {state.data.replayed && (
+          <p className="mt-2 text-xs text-muted">
+            This invoice had already been paid by this wallet — showing the original receipt.
+          </p>
+        )}
       </div>
     );
   }
@@ -184,7 +321,9 @@ export function PayInvoiceButton({
           Pay {total.toLocaleString()} {CURRENCY_NAME}
         </button>
         {!canAfford && (
-          <p className="text-xs text-danger">Your balance is not enough to pay this invoice.</p>
+          <p className="text-xs text-danger">
+            {payerLabel} does not hold enough {CURRENCY_NAME} to pay this invoice.
+          </p>
         )}
       </div>
     );
@@ -194,9 +333,13 @@ export function PayInvoiceButton({
     <form action={formAction} className="space-y-3 rounded-md border border-border p-4">
       <input type="hidden" name="invoiceId" value={invoiceId} />
       <p className="text-sm">
-        Pay {companyName} {total.toLocaleString()} {CURRENCY_NAME} from your personal wallet?
+        Pay {issuerName} {total.toLocaleString()} {CURRENCY_NAME} from {payerLabel}?
       </p>
-      {state && !state.ok && <p className="text-sm text-danger">{state.error}</p>}
+      {state && !state.ok && (
+        <p className="text-sm text-danger" role="alert">
+          {state.error}
+        </p>
+      )}
       <div className="flex gap-2">
         <button
           type="button"

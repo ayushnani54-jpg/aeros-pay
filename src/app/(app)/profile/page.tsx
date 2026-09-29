@@ -2,11 +2,14 @@ import Link from "next/link";
 import { getActingContext } from "@/lib/auth";
 import { ProfileForm } from "@/components/forms/profile-form";
 import { ChangePasswordForm } from "@/components/forms/change-password-form";
-import { StatusBadge } from "@/components/status-badge";
+import { StatusBadge, UserBadges } from "@/components/status-badge";
+import { badgesOf } from "@/lib/badges";
+import { PaymentSoundToggle } from "@/components/payment-sound";
 import { CompanyStatusBadge } from "@/components/status-badge";
 import { getOwnedCompanies } from "@/lib/auth";
 import { effectiveUserStatus, formatSuspensionRemaining } from "@/lib/status";
 import { CURRENCY_NAME } from "@/lib/constants";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 export default async function ProfilePage() {
   const ctx = await getActingContext();
@@ -15,6 +18,7 @@ export default async function ProfilePage() {
   const { user } = ctx;
   const companies = await getOwnedCompanies(user.id);
   const status = effectiveUserStatus(user);
+  const badges = badgesOf(user);
 
   return (
     <div className="space-y-6">
@@ -33,12 +37,20 @@ export default async function ProfilePage() {
             <StatusBadge status={status} />
           </dd>
           <dt className="text-muted">Registered</dt>
-          <dd>{new Date(user.createdAt).toLocaleDateString()}</dd>
+          <dd>{formatDate(user.createdAt)}</dd>
+          {(badges.official || badges.member) && (
+            <>
+              <dt className="text-muted">Government labels</dt>
+              <dd>
+                <UserBadges official={badges.official} member={badges.member} />
+              </dd>
+            </>
+          )}
         </dl>
         {status === "SUSPENDED" && user.suspendedUntil && (
           <p className="mt-3 text-sm text-muted">
             Suspension ends in {formatSuspensionRemaining(user.suspendedUntil)} (
-            {user.suspendedUntil.toLocaleString()}).
+            {formatDateTime(user.suspendedUntil)}).
           </p>
         )}
         <p className="mt-3 text-xs text-muted">
@@ -54,6 +66,11 @@ export default async function ProfilePage() {
       <section className="card p-5">
         <h2 className="mb-3 font-medium">Password</h2>
         <ChangePasswordForm mustChange={user.mustChangePassword} />
+      </section>
+
+      <section className="card p-5">
+        <h2 className="mb-3 font-medium">Sound</h2>
+        <PaymentSoundToggle />
       </section>
 
       <section className="card p-5">

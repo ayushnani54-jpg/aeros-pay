@@ -2,23 +2,25 @@
 
 import { useActionState } from "react";
 import { createIssuanceRequestAction } from "@/actions/government";
-import { MAX_ISSUANCE_AMOUNT } from "@/lib/constants";
 
-export function CreateIssuanceForm() {
+/** `maxAmount` is the LIVE, Government-configurable value (government.max_issuance_amount),
+ * passed down from a server component reading the government row — not a
+ * hardcoded constant. */
+export function CreateIssuanceForm({ maxAmount }: { maxAmount: number }) {
   const [state, formAction, pending] = useActionState(createIssuanceRequestAction, null);
 
   return (
     <form action={formAction} className="space-y-3">
       <div>
         <label htmlFor="amount" className="mb-1 block text-sm font-medium">
-          Requested amount (max {MAX_ISSUANCE_AMOUNT.toLocaleString()})
+          Requested amount (max {maxAmount.toLocaleString()})
         </label>
         <input
           id="amount"
           name="amount"
           type="number"
           min={1}
-          max={MAX_ISSUANCE_AMOUNT}
+          max={maxAmount}
           step={1}
           className="input"
           required

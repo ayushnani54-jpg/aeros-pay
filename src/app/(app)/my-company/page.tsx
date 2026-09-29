@@ -10,6 +10,13 @@ import { TransactionRow } from "@/components/transaction-row";
 import { WalletSwitcher } from "@/components/wallet-switcher";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { effectiveCompanyStatus, formatSuspensionRemaining } from "@/lib/status";
+import { formatDate } from "@/lib/datetime";
+import { getCompanyOrderCounts } from "@/lib/marketplace";
+import { CompanyQr } from "@/components/company-qr";
+import { getRequestOrigin } from "@/lib/origin";
+import { getCompanyRatingSummary } from "@/lib/ratings";
+import { RatingSummaryLine } from "@/components/rating-stars";
+import { ExportLink } from "@/components/forms/export-forms";
 
 export default async function MyCompanyPage() {
   const ctx = await getActingContext();
@@ -80,13 +87,17 @@ export default async function MyCompanyPage() {
 
   await runLoanMaintenance().catch(() => undefined);
 
-  const [stats, recentTx, offers, loans, taxRateBp] = await Promise.all([
-    getCompanyDashboardStats(company.id),
-    getTransactionsForWallet(company.id, "COMPANY", 8),
-    getPendingOffersForOwner(ctx.user.id),
-    getLoansForCompany(company.id),
-    resolveCompanyTaxRateBp(company),
-  ]);
+  const [stats, recentTx, offers, loans, taxRateBp, orderCounts, ratingSummary, origin] =
+    await Promise.all([
+      getCompanyDashboardStats(company.id),
+      getTransactionsForWallet(company.id, "COMPANY", 8),
+      getPendingOffersForOwner(ctx.user.id),
+      getLoansForCompany(company.id),
+      resolveCompanyTaxRateBp(company),
+      getCompanyOrderCounts(company.id),
+      getCompanyRatingSummary(company.id),
+      getRequestOrigin(),
+    ]);
 
   const status = effectiveCompanyStatus(company);
   const activeLoan = loans.find((l) =>
@@ -143,9 +154,34 @@ export default async function MyCompanyPage() {
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <NavCard href="/pay" label="Send payment" />
         <NavCard href="/my-company/invoices" label={`Invoices (${stats.pendingInvoices})`} />
+        <NavCard href="/my-company/offers" label="Listings" />
+        <NavCard
+          href="/my-company/orders"
+          label={
+            orderCounts.pending + orderCounts.waitingForInvoice > 0
+              ? `Orders (${orderCounts.pending + orderCounts.waitingForInvoice})`
+              : "Orders"
+          }
+        />
+        <NavCard href="/my-company/promotions" label="Promotions" />
         <NavCard href="/my-company/loans" label="Loans" />
         <NavCard href="/my-company/sale" label="Sell company" />
       </section>
+
+      {orderCounts.pending > 0 && (
+        <section className="card border-[#111111] p-5">
+          <h2 className="font-medium">
+            {orderCounts.pending} order{orderCounts.pending === 1 ? "" : "s"} waiting to be
+            accepted
+          </h2>
+          <p className="mt-1 text-sm text-muted">
+            Accept an order and send its invoice; payment settles to this company&rsquo;s wallet.
+          </p>
+          <Link href="/my-company/orders" className="btn btn-primary mt-3 inline-block text-sm">
+            Review orders
+          </Link>
+        </section>
+      )}
 
       {companyOffers.length > 0 && (
         <section className="card border-[#111111] p-5">
@@ -171,7 +207,7 @@ export default async function MyCompanyPage() {
               </p>
               {activeLoan.nextDueAt && (
                 <p className="mt-1 text-xs text-muted">
-                  Next due {new Date(activeLoan.nextDueAt).toLocaleDateString()}
+                  Next due {formatDate(activeLoan.nextDueAt)}
                 </p>
               )}
             </div>
@@ -207,6 +243,59 @@ export default async function MyCompanyPage() {
             ))}
           </div>
         )}
+      </section>
+
+      <section className="card p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="font-medium">Ratings</h2>
+          <RatingSummaryLine average={ratingSummary.average} count={ratingSummary.count} />
+        </div>
+        <p className="mt-1 text-sm text-muted">
+          Buyers can rate an order once it completes. Comments are removed after 30 days; the
+          stars stay.
+        </p>
+        <Link href={`/c/${company.username}`} className="btn btn-secondary mt-3 inline-block text-sm">
+          See them on your public profile
+        </Link>
+      </section>
+
+      {status === "APPROVED" && (
+        <section className="card p-5">
+          <h2 className="mb-3 font-medium">Your QR code</h2>
+          <CompanyQr origin={origin} username={company.username} />
+          <p className="mt-3 text-xs text-muted">
+            Print it or show it on screen. It opens your public profile — never your balance or
+            your transactions.
+          </p>
+        </section>
+      )}
+
+      <section className="card p-5">
+        <h2 className="font-medium">Download your company&apos;s records</h2>
+        <p className="mt-1 text-sm text-muted">
+          Generated when you ask for them and never stored. These links always export{" "}
+          {company.name} — the company is taken from the wallet you are using, not from the link.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <ExportLink
+            href="/api/export/transactions?scope=company&format=csv"
+            label="Transactions (CSV)"
+            testId="company-export-transactions"
+          />
+          <ExportLink
+            href="/api/export/invoices?scope=company&format=csv"
+            label="Invoices (CSV)"
+          />
+          <ExportLink href="/api/export/orders?scope=company&format=csv" label="Orders (CSV)" />
+          <ExportLink
+            href="/api/export/company-sales?scope=company&format=csv"
+            label="Sale records (CSV)"
+          />
+          <ExportLink
+            href="/api/export/transactions?scope=company&format=json"
+            label="Transactions (JSON)"
+          />
+        </div>
       </section>
 
       <section className="card p-5">

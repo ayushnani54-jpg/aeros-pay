@@ -13,6 +13,9 @@ import { StatusBadge } from "@/components/status-badge";
 import { WalletSwitcher } from "@/components/wallet-switcher";
 import { effectiveUserStatus } from "@/lib/status";
 import { runLoanMaintenance } from "@/lib/loans";
+import { formatDate } from "@/lib/datetime";
+import { PromotionSlot } from "@/components/promotion-slot";
+import { getLiveAd, runPromotionCharges } from "@/lib/promotions";
 
 export default async function DashboardPage() {
   const ctx = await getActingContext();
@@ -25,7 +28,14 @@ export default async function DashboardPage() {
     await runLoanMaintenance().catch(() => undefined);
   }
 
-  const [recentTx, openIssuances, pendingInvoices, pendingOffers, dueInstalments] =
+  // The promotion slot's lazy daily charge. This app has no scheduler yet, so
+  // the charge runs when a page renders the ad. It is idempotent per IST
+  // calendar day (one conditional UPDATE claims the day), it never throws for
+  // an expected outcome, and it is a single indexed read when there is no
+  // campaign at all — so putting it on the busiest page is safe and cheap.
+  await runPromotionCharges().catch(() => undefined);
+
+  const [recentTx, openIssuances, pendingInvoices, pendingOffers, dueInstalments, ad] =
     await Promise.all([
       getTransactionsForWallet(
         company ? company.id : user.id,
@@ -36,6 +46,7 @@ export default async function DashboardPage() {
       getInvoicesForBuyer(user.id, 20),
       getPendingOffersForOwner(user.id),
       getOutstandingInstalmentsForOwner(user.id),
+      getLiveAd(),
     ]);
 
   const pendingVotes = openIssuances.filter((row) => !row.myVote);
@@ -107,10 +118,18 @@ export default async function DashboardPage() {
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <QuickAction href="/pay" label="Pay" />
+        {/* The Market has no slot in the five-item mobile tab bar, so this is
+            how a phone reaches it. */}
+        <QuickAction href="/market" label="Market" />
+        <QuickAction href="/market/orders" label="My Orders" />
         <QuickAction href="/people" label="People" />
         <QuickAction href="/companies" label="Companies" />
         <QuickAction href="/transactions" label="Activity" />
       </section>
+
+      {/* The single promotion slot. Rendering it records nothing, and the X is
+          per-render client state — see src/components/promotion-slot.tsx. */}
+      <PromotionSlot ad={ad} />
 
       <section className="card p-5">
         <div className="mb-3 flex items-center justify-between">
@@ -150,7 +169,7 @@ export default async function DashboardPage() {
             <StatusBadge status={effectiveUserStatus(user)} />
           </dd>
           <dt className="text-muted">Registered</dt>
-          <dd>{new Date(user.createdAt).toLocaleDateString()}</dd>
+          <dd>{formatDate(user.createdAt)}</dd>
         </dl>
       </section>
     </div>

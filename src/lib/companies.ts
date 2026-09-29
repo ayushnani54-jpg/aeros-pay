@@ -2,10 +2,7 @@ import "server-only";
 import { db } from "@/db/client";
 import { companies, government, users } from "@/db/schema";
 import { and, eq, ne } from "drizzle-orm";
-import {
-  COMPANY_APPROVAL_FUNDING_AMOUNT,
-  COMPANY_DESCRIPTION_MAX_WORDS,
-} from "./constants";
+import { COMPANY_DESCRIPTION_MAX_WORDS } from "./constants";
 import { isUniqueViolation } from "./db-errors";
 import { recordAudit } from "./audit";
 import { notifyUser, publishUpdate } from "./notify";
@@ -139,9 +136,8 @@ export async function approveCompany(params: {
   fundingAmount?: number;
 }): Promise<{ company: Company; txRef: string; amount: number }> {
   const { companyId, governmentId, governmentUsername } = params;
-  const amount = params.fundingAmount ?? COMPANY_APPROVAL_FUNDING_AMOUNT;
 
-  const approved = await db.transaction(async (tx) => {
+  const { company: approved, amount } = await db.transaction(async (tx) => {
     const [company] = await tx
       .select()
       .from(companies)
@@ -161,6 +157,12 @@ export async function approveCompany(params: {
       .where(eq(government.id, governmentId))
       .for("update");
     if (!govRow) throw new CompanyError("Government account not found.");
+
+    // The one-off override keeps working exactly as before; otherwise the
+    // live, Government-configurable default is read from the government row
+    // itself (V2.1 — this used to be a hardcoded constant).
+    const amount = params.fundingAmount ?? govRow.companyApprovalFundingAmount;
+
     if (govRow.balance < amount) {
       throw new CompanyError(
         `Government treasury has insufficient Aeros to fund this company (${amount.toLocaleString()} required, ${govRow.balance.toLocaleString()} available).`,
@@ -190,7 +192,7 @@ export async function approveCompany(params: {
       metadata: { name: company.name, username: company.username },
     });
 
-    return updated;
+    return { company: updated, amount };
   });
 
   // Funding is its own atomic transfer. The balance check above makes a
@@ -506,6 +508,18 @@ export async function requireOwnedCompany(
 }
 
 /** The effective tax rate for a company (its own override, else the default). */
+/**
+ * The V2 company rate for a company: its own override, else the Government's
+ * default.
+ *
+ * V3 NOTE: this is now a DISPLAY helper only. The rate that is actually
+ * charged is decided by `resolveTaxDecision` in src/lib/taxmatrix.ts, which
+ * consults the Government's tax matrix first and falls back to exactly this
+ * value when the matrix is unconfigured (the shipped state). So this function
+ * still shows the right number until a matrix cell is configured for the
+ * relevant combination — teaching the remaining UI hints to ask the matrix is
+ * a later V3 phase, tracked with the rest of the Government tax UI.
+ */
 export async function resolveCompanyTaxRateBp(company: Company): Promise<number> {
   if (company.taxRateBp !== null) return company.taxRateBp;
   const [gov] = await db.select({ rate: government.companyTaxRateBp }).from(government).limit(1);

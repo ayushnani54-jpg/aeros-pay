@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getActingContext } from "@/lib/auth";
 import { searchUsers } from "@/lib/queries";
-import { StatusBadge } from "@/components/status-badge";
+import { StatusBadge, UserBadges } from "@/components/status-badge";
 
 export default async function PeoplePage({ searchParams }: PageProps<"/people">) {
   const ctx = await getActingContext();
@@ -40,9 +40,12 @@ export default async function PeoplePage({ searchParams }: PageProps<"/people">)
           {people.map((person) => (
             <div key={person.id} className="flex items-center justify-between gap-3 p-4">
               <div className="min-w-0">
-                <Link href={`/u/${person.username}`} className="font-medium hover:underline">
-                  {person.displayName}
-                </Link>
+                <span className="flex flex-wrap items-center gap-2">
+                  <Link href={`/u/${person.username}`} className="font-medium hover:underline">
+                    {person.displayName}
+                  </Link>
+                  <UserBadges official={person.badges.official} member={person.badges.member} />
+                </span>
                 <p className="truncate text-sm text-muted">@{person.username}</p>
                 {person.companies.length > 0 && (
                   <p className="mt-1 truncate text-xs text-muted">

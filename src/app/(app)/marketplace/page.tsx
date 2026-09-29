@@ -33,6 +33,13 @@ export default async function MarketplacePage() {
           Buying a company pays the seller from your personal wallet and transfers ownership to
           you. The company keeps its own balance and history.
         </p>
+        <p className="mt-2 text-sm text-muted">
+          This page is about buying a whole BUSINESS. For goods and services, go to the{" "}
+          <Link href="/market" className="underline">
+            Market
+          </Link>
+          .
+        </p>
       </div>
 
       {hiddenCount > 0 && (

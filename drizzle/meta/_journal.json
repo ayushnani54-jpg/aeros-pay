@@ -29,6 +29,20 @@
       "when": 1790507853866,
       "tag": "0003_v2_sales_loans",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790526310754,
+      "tag": "0004_configurable_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790528851184,
+      "tag": "0005_v3",
+      "breakpoints": true
     }
   ]
 }
