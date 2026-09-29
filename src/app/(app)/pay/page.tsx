@@ -6,6 +6,8 @@ import { PayForm } from "@/components/forms/pay-form";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { formatTaxRateBp } from "@/lib/tax";
 import { effectiveUserStatus } from "@/lib/status";
+import { getGovernmentSingleton } from "@/lib/queries";
+import { OfflineQueuePanel } from "@/components/offline/offline-queue-panel";
 
 export default async function PayPage({ searchParams }: PageProps<"/pay">) {
   const ctx = await getActingContext();
@@ -25,6 +27,11 @@ export default async function PayPage({ searchParams }: PageProps<"/pay">) {
   });
 
   const status = effectiveUserStatus(ctx.user);
+
+  // Offline payments are personal-wallet only — a company acting-context
+  // never sees the offline queue panel at all, matching that a company can
+  // never obtain an offline authorization (src/lib/offline-auth.ts).
+  const gov = ctx.company ? null : await getGovernmentSingleton();
 
   return (
     <div className="space-y-4">
@@ -52,6 +59,10 @@ export default async function PayPage({ searchParams }: PageProps<"/pay">) {
           balance={ctx.balance}
           prefillRecipient={prefill}
         />
+      )}
+
+      {gov && (
+        <OfflineQueuePanel offlinePolicyEnabled={gov.offlineTransactionsEnabled} showQueueForm />
       )}
     </div>
   );

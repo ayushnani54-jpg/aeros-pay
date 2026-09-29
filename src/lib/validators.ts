@@ -336,6 +336,41 @@ export const paymentQuoteSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// PWA offline payments (V3)
+// ---------------------------------------------------------------------------
+
+/** Government-configurable offline-transaction allowance policy. Empty string
+ * for the expiry field means "use the built-in default" — same "" = default
+ * convention as the retention/text-scrub forms. */
+export const offlinePolicySchema = z.object({
+  offlineTransactionsEnabled: z.coerce.boolean(),
+  offlineTotalAllowance: z.coerce
+    .number()
+    .int("Must be a whole number.")
+    .min(0, "Must be zero or more.")
+    .max(1_000_000, "Must be at most 1,000,000."),
+  offlineMaxPerTransaction: z.coerce
+    .number()
+    .int("Must be a whole number.")
+    .min(1, "Must be at least 1.")
+    .max(1_000_000, "Must be at most 1,000,000."),
+  offlineAuthExpiryMinutes: z.string().trim(),
+});
+
+/** What the client presents to sync one queued offline payment. */
+export const syncOfflinePaymentSchema = z.object({
+  token: z.string().trim().min(10, "Missing offline authorization."),
+  clientKey: z.string().uuid("Invalid idempotency key."),
+  recipientUsername: recipientHandleSchema,
+  amount: z.coerce
+    .number()
+    .int("Amount must be a whole number.")
+    .positive("Amount must be greater than zero."),
+  note: z.string().trim().max(200).optional().or(z.literal("")),
+  clientTimestamp: z.string().trim().optional(),
+});
+
+// ---------------------------------------------------------------------------
 // Support
 // ---------------------------------------------------------------------------
 

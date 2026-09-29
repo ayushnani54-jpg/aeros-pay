@@ -528,6 +528,27 @@ export async function resolvePayee(params: {
 }
 
 /**
+ * Resolves a recipient username to a `WalletRef`, INSIDE an already-open
+ * transaction, so a caller that needs to do other guarded work (checking and
+ * spending an allowance, for instance) in the same transaction as the
+ * transfer can still resolve "who is this username" from the database under
+ * that same transaction rather than opening a second one.
+ *
+ * V3 offline-payment sync (src/lib/offline-auth.ts) is the reason this
+ * exists: it needs the allowance check, the allowance spend and the transfer
+ * itself to commit or fail together. This is a thin, additive wrapper around
+ * the exact resolution `payByUsername` already uses — no new lookup logic,
+ * and `payByUsername`/`transfer`/`transferInTx` themselves are unchanged.
+ */
+export async function resolvePayeeRefInTx(
+  tx: Tx,
+  params: { username: string; toGovernment?: boolean },
+): Promise<WalletRef> {
+  const { wallet } = await resolvePayeeRef(tx, params);
+  return wallet;
+}
+
+/**
  * Server-computed quote for the Pay screen: amount → tax → what the recipient
  * receives. The rate comes from `src/lib/taxmatrix.ts` for the real, resolved
  * pair of wallets, so the number the payer confirms is the number the server

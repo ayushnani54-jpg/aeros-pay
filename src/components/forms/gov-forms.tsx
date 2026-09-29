@@ -23,6 +23,7 @@ import {
   setCompanyTaxAction,
   setEconomyPolicyAction,
   setLoanPolicyAction,
+  setOfflinePolicyAction,
   setRetentionAction,
   setV3RetentionAction,
   setSalePolicyAction,
@@ -736,6 +737,108 @@ export function EconomyPolicyForm({
       <Ok state={state} text="Economy policy updated." />
       <button type="submit" className="btn btn-primary" disabled={pending}>
         {pending ? "Saving…" : "Save economy policy"}
+      </button>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PWA offline payments (V3)
+// ---------------------------------------------------------------------------
+
+export function OfflinePolicyForm({
+  policy,
+}: {
+  policy: {
+    enabled: boolean;
+    totalAllowance: number;
+    maxPerTransaction: number;
+    authExpiryMinutes: number | null;
+  };
+}) {
+  const [state, formAction, pending] = useActionState(setOfflinePolicyAction, null);
+  const [enabled, setEnabled] = useState(policy.enabled);
+
+  return (
+    <form action={formAction} className="space-y-4">
+      <input type="hidden" name="offlineTransactionsEnabled" value={enabled ? "1" : "0"} />
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className={enabled ? "btn btn-primary text-sm" : "btn btn-secondary text-sm"}
+          onClick={() => setEnabled(true)}
+        >
+          Offline payments on
+        </button>
+        <button
+          type="button"
+          className={!enabled ? "btn btn-primary text-sm" : "btn btn-secondary text-sm"}
+          onClick={() => setEnabled(false)}
+        >
+          Offline payments off
+        </button>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div>
+          <label htmlFor="opAllowance" className="mb-1 block text-xs font-medium">
+            Total offline allowance per user ({CURRENCY_NAME})
+          </label>
+          <input
+            id="opAllowance"
+            name="offlineTotalAllowance"
+            type="number"
+            min={0}
+            max={1_000_000}
+            step={1}
+            className="input"
+            defaultValue={policy.totalAllowance}
+            required
+          />
+        </div>
+        <div>
+          <label htmlFor="opMaxTx" className="mb-1 block text-xs font-medium">
+            Max per offline transaction ({CURRENCY_NAME})
+          </label>
+          <input
+            id="opMaxTx"
+            name="offlineMaxPerTransaction"
+            type="number"
+            min={1}
+            max={1_000_000}
+            step={1}
+            className="input"
+            defaultValue={policy.maxPerTransaction}
+            required
+          />
+        </div>
+        <div>
+          <label htmlFor="opExpiry" className="mb-1 block text-xs font-medium">
+            Authorization expiry (minutes, optional)
+          </label>
+          <input
+            id="opExpiry"
+            name="offlineAuthExpiryMinutes"
+            type="number"
+            min={1}
+            max={43_200}
+            step={1}
+            className="input"
+            defaultValue={policy.authExpiryMinutes ?? ""}
+            placeholder="Default (60)"
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted">
+        Only a personal wallet can request an offline authorization — company and Government
+        wallets never get offline capability. The allowance is per user: it caps how many Aeros a
+        person can have synced from offline payments in total. Leave the expiry blank to use the
+        built-in default; every authorization always expires.
+      </p>
+      <Err state={state} />
+      <Ok state={state} text="Offline payment policy updated." />
+      <button type="submit" className="btn btn-primary" disabled={pending}>
+        {pending ? "Saving…" : "Save offline policy"}
       </button>
     </form>
   );

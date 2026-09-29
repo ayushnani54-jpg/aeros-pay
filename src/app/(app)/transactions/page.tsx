@@ -1,18 +1,18 @@
 import { getActingContext } from "@/lib/auth";
-import { getTransactionsForWallet } from "@/lib/queries";
+import { getGovernmentSingleton, getTransactionsForWallet } from "@/lib/queries";
 import { TransactionRow } from "@/components/transaction-row";
 import { ExportLink } from "@/components/forms/export-forms";
+import { OfflineQueuePanel } from "@/components/offline/offline-queue-panel";
 
 export default async function TransactionsPage() {
   const ctx = await getActingContext();
   if (!ctx) return null;
 
   const { user, company } = ctx;
-  const transactions = await getTransactionsForWallet(
-    company ? company.id : user.id,
-    company ? "COMPANY" : "USER",
-    200,
-  );
+  const [transactions, gov] = await Promise.all([
+    getTransactionsForWallet(company ? company.id : user.id, company ? "COMPANY" : "USER", 200),
+    company ? Promise.resolve(null) : getGovernmentSingleton(),
+  ]);
 
   return (
     <div className="space-y-5">
@@ -37,6 +37,8 @@ export default async function TransactionsPage() {
           testId="download-transactions-csv"
         />
       </div>
+
+      {gov && <OfflineQueuePanel offlinePolicyEnabled={gov.offlineTransactionsEnabled} showQueueForm={false} />}
 
       {transactions.length === 0 ? (
         <div className="card p-6">

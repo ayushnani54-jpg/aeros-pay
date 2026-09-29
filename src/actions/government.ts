@@ -70,6 +70,7 @@ import {
   ipDecisionSchema,
   issuanceRequestSchema,
   issuanceVoteSchema,
+  offlinePolicySchema,
   parseDateTime,
   publishUpdateSchema,
   rejectCompanySchema,
@@ -1087,6 +1088,85 @@ export async function setEconomyPolicyAction(
   revalidatePath("/gov/issuance");
   revalidatePath("/gov/companies");
   revalidatePath("/gov");
+  return { ok: true, data: undefined };
+}
+
+/**
+ * V3 — the PWA offline-payment allowance policy: master switch, per-user
+ * total allowance, per-transaction cap, and optional authorization expiry.
+ * Same validate/audit/revalidate shape as `setEconomyPolicyAction` above.
+ */
+export async function setOfflinePolicyAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  let g;
+  try {
+    g = await gov();
+  } catch {
+    return { ok: false, error: "Government authorization required." };
+  }
+
+  const parsed = offlinePolicySchema.safeParse({
+    offlineTransactionsEnabled: formData.get("offlineTransactionsEnabled") === "1",
+    offlineTotalAllowance: formData.get("offlineTotalAllowance"),
+    offlineMaxPerTransaction: formData.get("offlineMaxPerTransaction"),
+    offlineAuthExpiryMinutes: formData.get("offlineAuthExpiryMinutes") ?? "",
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  if (parsed.data.offlineMaxPerTransaction > parsed.data.offlineTotalAllowance) {
+    return {
+      ok: false,
+      error: "The per-transaction limit cannot be larger than the total allowance.",
+    };
+  }
+
+  const expiryTrimmed = parsed.data.offlineAuthExpiryMinutes.trim();
+  let expiryMinutes: number | null;
+  if (expiryTrimmed === "") {
+    expiryMinutes = null;
+  } else {
+    const value = Number(expiryTrimmed);
+    if (!Number.isInteger(value) || value < 1 || value > 43_200) {
+      return {
+        ok: false,
+        error: "Authorization expiry must be a whole number of minutes between 1 and 43,200 (30 days).",
+      };
+    }
+    expiryMinutes = value;
+  }
+
+  const [govRow] = await db.select().from(government).where(eq(government.id, g.id)).limit(1);
+
+  await db
+    .update(government)
+    .set({
+      offlineTransactionsEnabled: parsed.data.offlineTransactionsEnabled,
+      offlineTotalAllowance: parsed.data.offlineTotalAllowance,
+      offlineMaxPerTransaction: parsed.data.offlineMaxPerTransaction,
+      offlineAuthExpiryMinutes: expiryMinutes,
+      offlinePolicyUpdatedAt: new Date(),
+    })
+    .where(eq(government.id, g.id));
+
+  await recordAudit(db, {
+    action: "OFFLINE_POLICY_CHANGED",
+    actorType: "GOVERNMENT",
+    actorId: g.id,
+    actorLabel: g.username,
+    previousValue: JSON.stringify({
+      offlineTransactionsEnabled: govRow?.offlineTransactionsEnabled,
+      offlineTotalAllowance: govRow?.offlineTotalAllowance,
+      offlineMaxPerTransaction: govRow?.offlineMaxPerTransaction,
+      offlineAuthExpiryMinutes: govRow?.offlineAuthExpiryMinutes,
+    }),
+    newValue: JSON.stringify({ ...parsed.data, offlineAuthExpiryMinutes: expiryMinutes }),
+    metadata: { ...parsed.data, offlineAuthExpiryMinutes: expiryMinutes },
+  });
+
+  revalidatePath("/gov/tax");
   return { ok: true, data: undefined };
 }
 

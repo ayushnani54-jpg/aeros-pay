@@ -178,3 +178,57 @@ export async function getCompanyContextId(): Promise<string | null> {
   const store = await cookies();
   return store.get(COMPANY_CONTEXT_COOKIE)?.value ?? null;
 }
+
+// ---- Offline payment authorization (V3 PWA offline payments) --------------
+//
+// Not a session and not a cookie: a short, signed JWT the client fetches
+// while online and stores itself (in IndexedDB — see src/lib/offline-db.ts),
+// then presents back at sync time. It reuses the SAME signing primitive as
+// the session tokens above (`jose`, HS256, `AUTH_SECRET`) and the same
+// discriminant-claim pattern that keeps a user session from ever being
+// mistaken for a Government one: `purpose` here plays the role `role` plays
+// for sessions, so an offline-auth token can never be replayed anywhere a
+// session token is expected, or vice versa. See src/lib/offline-auth.ts for
+// what goes into the payload and how it is enforced at sync time.
+
+export type OfflineAuthTokenPayload = {
+  purpose: "offline_payment_auth";
+  /** user id */
+  sub: string;
+  /** offline_auth_tokens.id — looked up server-side at sync to track
+   * consumed-so-far across every device that presents this token. */
+  jti: string;
+  /** Remaining allowance snapshot at issue, in whole Aeros. */
+  allowance: number;
+  /** Per-transaction cap snapshot at issue, in whole Aeros. */
+  perTxMax: number;
+};
+
+export async function signOfflineAuthToken(
+  payload: OfflineAuthTokenPayload,
+  maxAgeSeconds: number,
+): Promise<string> {
+  return new SignJWT(payload)
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime(Math.floor(Date.now() / 1000) + maxAgeSeconds)
+    .sign(getSecretKey());
+}
+
+/**
+ * Verifies signature AND expiry (`jwtVerify` itself rejects an expired
+ * token), and rejects anything that is not an offline-auth token — including
+ * a perfectly valid user or Government session token, which would otherwise
+ * verify fine against the same secret. Returns null rather than throwing, so
+ * every call site handles "invalid or expired" as one uniform case exactly
+ * like `getUserSession`/`getGovSession` do.
+ */
+export async function verifyOfflineAuthToken(
+  token: string,
+): Promise<OfflineAuthTokenPayload | null> {
+  const payload = await verifySession<OfflineAuthTokenPayload>(token);
+  if (!payload || payload.purpose !== "offline_payment_auth") return null;
+  if (typeof payload.sub !== "string" || typeof payload.jti !== "string") return null;
+  if (!Number.isFinite(payload.allowance) || !Number.isFinite(payload.perTxMax)) return null;
+  return payload;
+}

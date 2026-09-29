@@ -16,6 +16,7 @@ import { runLoanMaintenance } from "@/lib/loans";
 import { formatDate } from "@/lib/datetime";
 import { PromotionSlot } from "@/components/promotion-slot";
 import { getLiveAd, runPromotionCharges } from "@/lib/promotions";
+import { DashboardOfflineSync } from "@/components/offline/dashboard-offline-sync";
 
 export default async function DashboardPage() {
   const ctx = await getActingContext();
@@ -53,8 +54,34 @@ export default async function DashboardPage() {
   const unpaidInvoices = pendingInvoices.filter((r) => r.invoice.status === "PENDING");
   const overdue = dueInstalments.filter((r) => r.instalment.status === "OVERDUE");
 
+  // The offline shell's snapshot of "recent activity" — deliberately just
+  // the handful of fields the offline dashboard actually renders, not the
+  // full `Transaction` row (see src/components/offline/dashboard-offline-sync.tsx).
+  const viewerId = company ? company.id : user.id;
+  const offlineRecentActivity = recentTx.map((tx) => {
+    const outgoing = tx.senderType !== "GOVERNMENT" && tx.senderId === viewerId;
+    const counterpartyType = outgoing ? tx.receiverType : tx.senderType;
+    const counterpartyUsername = outgoing ? tx.receiverUsername : tx.senderUsername;
+    return {
+      id: tx.id,
+      txRef: tx.txRef,
+      counterparty: counterpartyType === "GOVERNMENT" ? "Government" : `@${counterpartyUsername}`,
+      direction: outgoing ? ("out" as const) : ("in" as const),
+      amount: outgoing ? tx.grossAmount : tx.netAmount,
+      createdAt: tx.createdAt.toISOString(),
+    };
+  });
+
   return (
     <div className="space-y-6">
+      <DashboardOfflineSync
+        balance={ctx.balance}
+        handle={ctx.handle}
+        displayLabel={ctx.displayLabel}
+        status={effectiveUserStatus(user)}
+        recentActivity={offlineRecentActivity}
+      />
+
       <section className="card p-6">
         <p className="text-sm text-muted">
           {company ? `${company.name} balance` : "Your balance"}

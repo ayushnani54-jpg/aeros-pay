@@ -1,0 +1,19 @@
+{
+  "name": "Aeros Pay",
+  "short_name": "Aeros Pay",
+  "description": "A private, closed-loop virtual economy — hold and transfer Aeros digitally.",
+  "start_url": "/dashboard",
+  "id": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#111111",
+  "icons": [
+    {
+      "src": "/pwa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

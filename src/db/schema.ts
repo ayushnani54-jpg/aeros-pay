@@ -300,6 +300,30 @@ export const government = pgTable("government", {
     withTimezone: true,
   }),
 
+  // --- V3: PWA offline-payment allowance policy ------------------------------
+  //
+  // Governs the single offline capability the app has: a personal wallet may
+  // fetch a short, signed offline authorization while online (spec: PWA
+  // offline payments) and spend against it while disconnected. Nothing else
+  // is ever authorized offline — see src/lib/offline-auth.ts.
+  //
+  // `offlineTotalAllowance` is a PER-USER lifetime ceiling: at issue, a token
+  // carries `offlineTotalAllowance - users.offline_allowance_used` as its
+  // snapshot remaining allowance, and `users.offline_allowance_used` is only
+  // ever incremented — atomically, guarded, in the same transaction as the
+  // real transfer — when a queued offline payment actually SYNCS
+  // successfully. Issuing a token never spends allowance; only a synced
+  // payment does.
+  offlineTransactionsEnabled: boolean("offline_transactions_enabled").notNull().default(false),
+  offlineTotalAllowance: integer("offline_total_allowance").notNull().default(2000),
+  offlineMaxPerTransaction: integer("offline_max_per_transaction").notNull().default(500),
+  /** Minutes an issued offline authorization stays valid. NULL = use the
+   * built-in default (see DEFAULT_OFFLINE_TOKEN_EXPIRY_MINUTES) — every token
+   * always carries a real, server-set expiry; this column only lets the
+   * Government shorten or lengthen it. */
+  offlineAuthExpiryMinutes: integer("offline_auth_expiry_minutes"),
+  offlinePolicyUpdatedAt: timestamp("offline_policy_updated_at", { withTimezone: true }),
+
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -321,6 +345,18 @@ export const government = pgTable("government", {
   check(
     "government_promotion_daily_rate_bounds",
     sql`${t.promotionDailyRate} >= 0 AND ${t.promotionDailyRate} <= 1000000`,
+  ),
+  check(
+    "government_offline_total_allowance_bounds",
+    sql`${t.offlineTotalAllowance} >= 0 AND ${t.offlineTotalAllowance} <= 1000000`,
+  ),
+  check(
+    "government_offline_max_per_transaction_bounds",
+    sql`${t.offlineMaxPerTransaction} >= 1 AND ${t.offlineMaxPerTransaction} <= 1000000`,
+  ),
+  check(
+    "government_offline_auth_expiry_bounds",
+    sql`${t.offlineAuthExpiryMinutes} IS NULL OR (${t.offlineAuthExpiryMinutes} >= 1 AND ${t.offlineAuthExpiryMinutes} <= 43200)`,
   ),
 ]));
 
@@ -402,10 +438,20 @@ export const users = pgTable("users", {
   isGovernmentMember: boolean("is_government_member").notNull().default(false),
   badgesUpdatedAt: timestamp("badges_updated_at", { withTimezone: true }),
   badgesUpdatedBy: varchar("badges_updated_by", { length: 64 }),
+
+  // --- V3: PWA offline-payment allowance, spent-to-date ----------------------
+  // Lifetime Aeros this user has synced through an offline authorization.
+  // Only ever incremented, by a guarded conditional UPDATE inside the same
+  // transaction as the real transfer it accompanies (src/lib/offline-auth.ts)
+  // — never by issuing a token, only by a payment actually landing. Compared
+  // against `government.offline_total_allowance` at issue time (to compute a
+  // new token's remaining allowance) and again, live, at every sync.
+  offlineAllowanceUsed: integer("offline_allowance_used").notNull().default(0),
 }, (t) => ([
   uniqueIndex("users_registration_code_unique").on(t.registrationCodeId),
   check("users_username_lowercase", sql`${t.username} = lower(${t.username})`),
   check("users_balance_nonnegative", sql`${t.balance} >= 0`),
+  check("users_offline_allowance_used_nonnegative", sql`${t.offlineAllowanceUsed} >= 0`),
 ]));
 
 // ---------------------------------------------------------------------------
@@ -1232,6 +1278,53 @@ export const idempotencyKeys = pgTable("idempotency_keys", {
   index("idempotency_keys_expires_idx").on(t.expiresAt),
 ]));
 
+// ---------------------------------------------------------------------------
+// PWA offline payments — issued offline authorizations (V3)
+//
+// One row per token issued by `issueOfflineAuthorization` (src/lib/
+// offline-auth.ts). `id` IS the token's `jti`: the signed JWT handed to the
+// client carries this row's id, so a sync can look the row up directly.
+//
+// STRUCTURAL SAFETY (matches src/lib/settlement.ts's philosophy, applied with
+// a database CHECK rather than a branded type): `consumed_amount` can never
+// exceed `allowance_at_issue` for ANY reason, including a future bug in the
+// application code that forgets to guard an UPDATE — Postgres itself refuses
+// the row. The application also never relies on this constraint alone: every
+// increment is its own conditional `UPDATE ... WHERE consumed_amount +
+// :amount <= allowance_at_issue`, run inside the SAME transaction as the real
+// transfer it authorizes, so the check and the money movement commit or fail
+// together (see `consumeOfflineAllowance`).
+// ---------------------------------------------------------------------------
+
+export const offlineAuthTokens = pgTable("offline_auth_tokens", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+
+  /** Snapshot taken at issue: min(government policy, remaining lifetime
+   * allowance for this user) at that moment. Immutable afterwards — a later
+   * policy change never retroactively changes an already-issued token. */
+  allowanceAtIssue: integer("allowance_at_issue").notNull(),
+  /** Snapshot of `government.offline_max_per_transaction` at issue. */
+  perTransactionMax: integer("per_transaction_max").notNull(),
+  /** Running total successfully synced against this token, across every
+   * device or sync attempt that ever presents it. */
+  consumedAmount: integer("consumed_amount").notNull().default(0),
+
+  issuedAt: timestamp("issued_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (t) => ([
+  check("offline_auth_tokens_allowance_nonnegative", sql`${t.allowanceAtIssue} >= 0`),
+  check("offline_auth_tokens_per_tx_max_positive", sql`${t.perTransactionMax} >= 1`),
+  check("offline_auth_tokens_consumed_nonnegative", sql`${t.consumedAmount} >= 0`),
+  check(
+    "offline_auth_tokens_consumed_within_allowance",
+    sql`${t.consumedAmount} <= ${t.allowanceAtIssue}`,
+  ),
+  index("offline_auth_tokens_user_idx").on(t.userId),
+]));
+
 // ===========================================================================
 // V3 — MARKETPLACE
 // ===========================================================================
@@ -1769,6 +1862,7 @@ export type LoanAction = typeof loanActions.$inferSelect;
 // --- V3 ---------------------------------------------------------------------
 export type TaxMatrixRow = typeof taxMatrix.$inferSelect;
 export type IdempotencyKey = typeof idempotencyKeys.$inferSelect;
+export type OfflineAuthToken = typeof offlineAuthTokens.$inferSelect;
 export type MarketplaceOffer = typeof marketplaceOffers.$inferSelect;
 export type MarketplaceOrder = typeof marketplaceOrders.$inferSelect;
 export type MarketplaceWantedRequest = typeof marketplaceWantedRequests.$inferSelect;

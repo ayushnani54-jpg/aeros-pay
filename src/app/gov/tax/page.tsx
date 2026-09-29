@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { getAllCompaniesForGovernment, getGovernmentSingleton, getRecentAuditLogs } from "@/lib/queries";
 import { TaxRateForm } from "@/components/forms/tax-rate-form";
-import { CompanyDefaultTaxForm, EconomyPolicyForm } from "@/components/forms/gov-forms";
+import {
+  CompanyDefaultTaxForm,
+  EconomyPolicyForm,
+  OfflinePolicyForm,
+} from "@/components/forms/gov-forms";
 import { formatTaxRateBp } from "@/lib/tax";
 import { formatDateTime } from "@/lib/datetime";
 import { CURRENCY_NAME } from "@/lib/constants";
@@ -71,6 +75,23 @@ export default async function GovTaxPage() {
           companyApprovalFundingAmount={gov.companyApprovalFundingAmount}
           maxIssuanceAmount={gov.maxIssuanceAmount}
           issuanceCooldownDays={gov.issuanceCooldownDays}
+        />
+      </section>
+
+      <section className="card p-5">
+        <h2 className="mb-1 font-medium">Offline payments (PWA)</h2>
+        <p className="mb-4 text-sm text-muted">
+          Controls whether a personal wallet may fetch a short offline authorization while online
+          and spend against it while disconnected. A synced offline payment uses the exact same
+          tax and balance rules as any other payment.
+        </p>
+        <OfflinePolicyForm
+          policy={{
+            enabled: gov.offlineTransactionsEnabled,
+            totalAllowance: gov.offlineTotalAllowance,
+            maxPerTransaction: gov.offlineMaxPerTransaction,
+            authExpiryMinutes: gov.offlineAuthExpiryMinutes,
+          }}
         />
       </section>
 
