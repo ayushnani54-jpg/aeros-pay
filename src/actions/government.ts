@@ -68,6 +68,7 @@ import {
   fundUserSchema,
   governmentPaymentSchema,
   ipDecisionSchema,
+  maxCompaniesPolicySchema,
   issuanceRequestSchema,
   issuanceVoteSchema,
   offlinePolicySchema,
@@ -1088,6 +1089,65 @@ export async function setEconomyPolicyAction(
   revalidatePath("/gov/issuance");
   revalidatePath("/gov/companies");
   revalidatePath("/gov");
+  return { ok: true, data: undefined };
+}
+
+/**
+ * Government-set limit on how many companies one person may own at once
+ * (counted without REJECTED ones - see applyForCompany in src/lib/companies.ts).
+ * Same validate / lock / audit / revalidate shape as setEconomyPolicyAction.
+ * Lowering the limit never touches companies that already exist; it only
+ * stops NEW applications until the owner is under the limit again.
+ */
+export async function setMaxCompaniesPolicyAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  let g;
+  try {
+    g = await gov();
+  } catch {
+    return { ok: false, error: "Government authorization required." };
+  }
+
+  const parsed = maxCompaniesPolicySchema.safeParse({
+    maxCompaniesPerUser: formData.get("maxCompaniesPerUser"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  await db.transaction(async (tx) => {
+    const [govRow] = await tx
+      .select()
+      .from(government)
+      .where(eq(government.id, g.id))
+      .for("update");
+    if (!govRow) throw new Error("Government account not found.");
+
+    await tx
+      .update(government)
+      .set({
+        maxCompaniesPerUser: parsed.data.maxCompaniesPerUser,
+        maxCompaniesPerUserUpdatedAt: new Date(),
+      })
+      .where(eq(government.id, govRow.id));
+
+    await recordAudit(tx, {
+      action: "MAX_COMPANIES_POLICY_CHANGED",
+      actorType: "GOVERNMENT",
+      actorId: g.id,
+      actorLabel: g.username,
+      previousValue: JSON.stringify({ maxCompaniesPerUser: govRow.maxCompaniesPerUser }),
+      newValue: JSON.stringify(parsed.data),
+      metadata: parsed.data,
+    });
+  });
+
+  revalidatePath("/gov/tax");
+  revalidatePath("/gov/companies");
+  revalidatePath("/my-company");
+  revalidatePath("/companies");
   return { ok: true, data: undefined };
 }
 

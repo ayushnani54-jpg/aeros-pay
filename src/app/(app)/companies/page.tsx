@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getActingContext } from "@/lib/auth";
 import { searchCompanies } from "@/lib/queries";
+import { getMyCompanyAllowance } from "@/lib/companies";
 import { getOpenListingsForViewer } from "@/lib/sales";
 import { CURRENCY_NAME } from "@/lib/constants";
 
@@ -11,9 +12,10 @@ export default async function CompaniesPage({ searchParams }: PageProps<"/compan
   const params = await searchParams;
   const q = typeof params.q === "string" ? params.q : "";
 
-  const [companies, listings] = await Promise.all([
+  const [companies, listings, allowance] = await Promise.all([
     searchCompanies(q),
     getOpenListingsForViewer(ctx.user.id),
+    getMyCompanyAllowance(ctx.user.id),
   ]);
 
   const forSale = new Map(listings.map((l) => [l.company.id, l.listing]));
@@ -34,6 +36,11 @@ export default async function CompaniesPage({ searchParams }: PageProps<"/compan
           {ctx.availableCompanies.length === 0 && (
             <Link href="/my-company" className="btn btn-primary text-sm">
               Create a company
+            </Link>
+          )}
+          {ctx.availableCompanies.length > 0 && allowance.canCreate && (
+            <Link href="/my-company/new" className="btn btn-secondary text-sm">
+              Create another company
             </Link>
           )}
         </div>

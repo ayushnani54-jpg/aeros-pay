@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getActingContext, getOwnedCompanies } from "@/lib/auth";
 import { getCompanyDashboardStats, getTransactionsForWallet } from "@/lib/queries";
-import { resolveCompanyTaxRateBp } from "@/lib/companies";
+import { getMyCompanyAllowance, resolveCompanyTaxRateBp } from "@/lib/companies";
 import { getPendingOffersForOwner } from "@/lib/sales";
 import { getLoansForCompany, runLoanMaintenance } from "@/lib/loans";
 import { CreateCompanyForm } from "@/components/forms/company-forms";
@@ -23,6 +23,7 @@ export default async function MyCompanyPage() {
   if (!ctx) return null;
 
   const owned = await getOwnedCompanies(ctx.user.id);
+  const allowance = await getMyCompanyAllowance(ctx.user.id);
 
   // No company yet — show the application form.
   if (owned.length === 0) {
@@ -80,7 +81,15 @@ export default async function MyCompanyPage() {
             )}
           </div>
         ))}
-        {owned.every((c) => c.status !== "PENDING") && <CreateCompanyForm />}
+        {owned.every((c) => c.status !== "PENDING") &&
+          (allowance.canCreate ? (
+            <CreateCompanyForm />
+          ) : (
+            <p className="text-sm text-muted">
+              You already own {allowance.owned} of the {allowance.max} compan
+              {allowance.max === 1 ? "y" : "ies"} the Government allows per person.
+            </p>
+          ))}
       </div>
     );
   }
@@ -296,6 +305,25 @@ export default async function MyCompanyPage() {
             label="Transactions (JSON)"
           />
         </div>
+      </section>
+
+      <section className="card p-5">
+        <h2 className="font-medium">Your companies</h2>
+        <p className="mt-1 text-sm text-muted">
+          You own {allowance.owned} of the {allowance.max} compan{allowance.max === 1 ? "y" : "ies"}{" "}
+          the Government allows per person.
+        </p>
+        {pending.map((c) => (
+          <p key={c.id} className="mt-2 text-sm">
+            <span className="font-medium">{c.name}</span>{" "}
+            <span className="text-muted">@{c.username} — application awaiting Government review.</span>
+          </p>
+        ))}
+        {allowance.canCreate && pending.length === 0 && (
+          <Link href="/my-company/new" className="btn btn-secondary mt-3 inline-block text-sm">
+            Create another company
+          </Link>
+        )}
       </section>
 
       <section className="card p-5">

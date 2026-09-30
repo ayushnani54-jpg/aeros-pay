@@ -324,6 +324,16 @@ export const government = pgTable("government", {
   offlineAuthExpiryMinutes: integer("offline_auth_expiry_minutes"),
   offlinePolicyUpdatedAt: timestamp("offline_policy_updated_at", { withTimezone: true }),
 
+  // --- Multi-company policy -------------------------------------------------
+  /** How many companies one person may own at the same time (Government-set).
+   * Counted as: the owner's companies that are not REJECTED (so a pending
+   * application counts, a rejected one does not). Default 1 keeps the
+   * behaviour every existing deployment already had. */
+  maxCompaniesPerUser: integer("max_companies_per_user").notNull().default(1),
+  maxCompaniesPerUserUpdatedAt: timestamp("max_companies_per_user_updated_at", {
+    withTimezone: true,
+  }),
+
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -357,6 +367,10 @@ export const government = pgTable("government", {
   check(
     "government_offline_auth_expiry_bounds",
     sql`${t.offlineAuthExpiryMinutes} IS NULL OR (${t.offlineAuthExpiryMinutes} >= 1 AND ${t.offlineAuthExpiryMinutes} <= 43200)`,
+  ),
+  check(
+    "government_max_companies_per_user_bounds",
+    sql`${t.maxCompaniesPerUser} >= 1 AND ${t.maxCompaniesPerUser} <= 100`,
   ),
 ]));
 
@@ -583,10 +597,13 @@ export const transactions = pgTable("transactions", {
 // ---------------------------------------------------------------------------
 // Invoices (V2)
 //
-// Quoting convention: `subtotal` is the price the company quotes, tax is added
-// on top, and `total` is what the buyer pays. The ledger row written on
-// payment still satisfies the system-wide invariant gross = tax + net, with
-// gross = total (buyer paid), net = subtotal (company received).
+// Quoting convention: `subtotal` is the price the company quotes and `total`
+// is what the buyer pays - the same number, because the tax is taken out of
+// the company's proceeds (net = total - tax) and is never added on top.
+// (Invoices issued before that rule had total = subtotal + tax; they still
+// pay as quoted.) The ledger row written on payment satisfies the
+// system-wide invariant gross = tax + net, with gross = total (buyer paid)
+// and net = total - tax (company received).
 // ---------------------------------------------------------------------------
 
 export const invoices = pgTable("invoices", {

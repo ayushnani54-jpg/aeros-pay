@@ -110,8 +110,11 @@ export default async function CompanyInvoicesPage({
                   </p>
                   <p className="mt-1 text-xs text-muted">
                     {invoice.quantity} × {invoice.unitPrice.toLocaleString()} ={" "}
-                    {invoice.subtotal.toLocaleString()} + {invoice.taxAmount.toLocaleString()}{" "}
-                    tax · {formatDate(invoice.createdAt)}
+                    {invoice.subtotal.toLocaleString()}
+                    {invoice.taxAmount > 0 && invoice.total !== invoice.subtotal
+                      ? ` + ${invoice.taxAmount.toLocaleString()} tax`
+                      : ` · tax ${invoice.taxAmount.toLocaleString()} (you receive ${(invoice.total - invoice.taxAmount).toLocaleString()})`}{" "}
+                    · {formatDate(invoice.createdAt)}
                   </p>
                   {invoice.paidTxRef && (
                     <p className="mt-1 font-mono text-xs text-muted">Ref {invoice.paidTxRef}</p>

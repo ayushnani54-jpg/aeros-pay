@@ -49,10 +49,14 @@ import type { Company, Invoice } from "@/db/schema";
  *    `src/lib/settlement.ts`, and `transferInTx` re-derives and re-asserts it
  *    inside the transaction. See that file for the full argument.
  *
- * Tax on invoices is ADDED ON TOP, exactly as in V2: an 800 invoice at 5%
- * means the payer pays 840 and the company receives 800. The snapshot already
- * contains the tax, so payment passes it through as a `forcedBreakdown` and
- * can never charge tax twice.
+ * Tax on invoices is taken from the COMPANY's proceeds, never added on top:
+ * an 800 invoice at 5% means the payer pays 800, the tax is 40 and the company
+ * receives 760. The snapshot already contains the tax, so payment passes it
+ * through as a `forcedBreakdown` and can never charge tax twice.
+ *
+ * Invoices issued before this rule were add-on (total = subtotal + tax: pay
+ * 840, company gets 800). They keep working: payInvoiceInTx accepts both
+ * shapes and always settles `total`, with the company receiving `total - tax`.
  */
 
 export class InvoiceError extends Error {
@@ -518,11 +522,16 @@ async function payInvoiceInTx(
   const destination: SettlementDestination = await deriveCompanySettlement(tx, invoice.companyId);
 
   // The exact payable amount, computed server-side from the frozen snapshot.
-  // Tax was added on top when the invoice was issued, so it is passed through
+  // The tax was fixed when the invoice was issued, so it is passed through
   // rather than resolved again — an invoice that already carries a tax amount
   // can never be taxed a second time.
-  const expectedTotal = invoice.subtotal + invoice.taxAmount;
-  if (expectedTotal !== invoice.total) {
+  //
+  // Two shapes exist and both are valid: the current one (total = subtotal,
+  // tax comes out of the company's proceeds) and the older add-on one
+  // (total = subtotal + tax). Anything else is refused.
+  const currentShape = invoice.total === invoice.subtotal;
+  const legacyAddOnShape = invoice.total === invoice.subtotal + invoice.taxAmount;
+  if ((!currentShape && !legacyAddOnShape) || invoice.taxAmount > invoice.total) {
     throw new InvoiceError("This invoice's amounts are inconsistent and it cannot be paid.");
   }
 
@@ -542,7 +551,7 @@ async function payInvoiceInTx(
     forcedBreakdown: {
       grossAmount: invoice.total,
       taxAmount: invoice.taxAmount,
-      netAmount: invoice.subtotal,
+      netAmount: invoice.total - invoice.taxAmount,
       taxRateBpApplied: invoice.taxAmount > 0 ? invoice.taxRateBp : 0,
     },
     notify: {

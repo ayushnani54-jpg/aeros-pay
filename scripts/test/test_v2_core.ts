@@ -85,16 +85,22 @@ async function main() {
   const t3 = computeTax(100, 700);
   check("tax: 100 @ 7% -> 7 tax", t3.taxAmount === 7, t3);
 
-  // --- invoice add-on tax ------------------------------------------------
+  // --- invoice tax (taken from the company's proceeds) ---------------------
   const inv = computeInvoiceTotals(800, 500);
   check(
-    "invoice: subtotal 800 @5% -> tax 40, total payable 840",
-    inv.subtotal === 800 && inv.taxAmount === 40 && inv.total === 840,
+    "invoice: price 800 @5% -> tax 40, buyer pays 800, company receives 760",
+    inv.subtotal === 800 && inv.taxAmount === 40 && inv.total === 800 && inv.netAmount === 760,
     inv,
   );
   check(
-    "invoice: ledger invariant gross = tax + net holds (840 = 40 + 800)",
-    inv.total === inv.taxAmount + inv.subtotal,
+    "invoice: ledger invariant gross = tax + net holds (800 = 40 + 760)",
+    inv.total === inv.taxAmount + inv.netAmount,
+  );
+  const inv500 = computeInvoiceTotals(500, 500);
+  check(
+    "invoice: 500 @5% -> buyer pays 500, tax 25, company receives 475",
+    inv500.total === 500 && inv500.taxAmount === 25 && inv500.netAmount === 475,
+    inv500,
   );
 
   // --- tax routing (spec §22) --------------------------------------------

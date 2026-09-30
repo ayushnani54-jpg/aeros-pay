@@ -658,7 +658,7 @@ export async function placeOrder(params: {
         tx,
         seller.ownerUserId,
         "ORDER_RECEIVED",
-        `${seller.name} received order ${orderNumber} — ${quantity} × ${offer.title} (${(offer.unitPrice * quantity).toLocaleString()} Aeros before tax).`,
+        `${seller.name} received order ${orderNumber} — ${quantity} × ${offer.title} (${(offer.unitPrice * quantity).toLocaleString()} Aeros).`,
         `/my-company/orders`,
       );
 

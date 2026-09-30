@@ -194,8 +194,8 @@ export function CreateOfferForm() {
       <div>
         <h3 className="font-medium">Add a listing</h3>
         <p className="mt-1 text-sm text-muted">
-          Buyers see this price; tax is added on top when you invoice the order, so you receive
-          the full amount you ask for.
+          Buyers pay exactly this price. When you invoice an order, the tax is taken out of what
+          your company receives.
         </p>
       </div>
 
@@ -462,8 +462,7 @@ export function PlaceOrderForm({
       <div className="card p-5" data-testid="order-placed">
         <p className="font-semibold text-success">Order placed</p>
         <p className="mt-2 text-sm">
-          {state.data.orderNumber} · {state.data.subtotal.toLocaleString()} {CURRENCY_NAME} before
-          tax
+          {state.data.orderNumber} · {state.data.subtotal.toLocaleString()} {CURRENCY_NAME}
         </p>
         <p className="mt-1 text-xs text-muted">
           The seller will accept it and send you an invoice. Nothing is charged until you pay that
@@ -522,7 +521,7 @@ export function PlaceOrderForm({
         </div>
         <div className="flex justify-between text-xs text-muted">
           <dt>Tax</dt>
-          <dd>Added by the seller&rsquo;s invoice</dd>
+          <dd>Taken out of the seller&rsquo;s proceeds</dd>
         </div>
       </dl>
 
@@ -656,8 +655,8 @@ export function IssueOrderInvoiceForm({ orderId, total }: { orderId: string; tot
     <form action={formAction} className="w-full space-y-2 rounded-md border border-border p-3">
       <input type="hidden" name="orderId" value={orderId} />
       <p className="text-xs text-muted">
-        The invoice uses the order&rsquo;s own {total.toLocaleString()} {CURRENCY_NAME} subtotal.
-        Tax is added on top by the server.
+        The invoice uses the order&rsquo;s own {total.toLocaleString()} {CURRENCY_NAME} price. The
+        buyer pays that amount; the server takes the tax out of what you receive.
       </p>
       <label htmlFor={`due-${orderId}`} className="block text-xs text-muted">
         Due date (optional)

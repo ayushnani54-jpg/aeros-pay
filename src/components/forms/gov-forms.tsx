@@ -23,6 +23,7 @@ import {
   setCompanyTaxAction,
   setEconomyPolicyAction,
   setLoanPolicyAction,
+  setMaxCompaniesPolicyAction,
   setOfflinePolicyAction,
   setRetentionAction,
   setV3RetentionAction,
@@ -737,6 +738,46 @@ export function EconomyPolicyForm({
       <Ok state={state} text="Economy policy updated." />
       <button type="submit" className="btn btn-primary" disabled={pending}>
         {pending ? "Saving…" : "Save economy policy"}
+      </button>
+    </form>
+  );
+}
+
+/**
+ * How many companies one person may own at the same time. 1 = one company per
+ * person (the original behaviour). Lowering it never removes existing
+ * companies - it only blocks NEW applications until the owner is under it.
+ */
+export function MaxCompaniesPolicyForm({ maxCompaniesPerUser }: { maxCompaniesPerUser: number }) {
+  const [state, formAction, pending] = useActionState(setMaxCompaniesPolicyAction, null);
+
+  return (
+    <form action={formAction} className="space-y-3">
+      <div className="max-w-xs">
+        <label htmlFor="mcMax" className="mb-1 block text-xs font-medium">
+          Max companies per person
+        </label>
+        <input
+          id="mcMax"
+          name="maxCompaniesPerUser"
+          type="number"
+          min={1}
+          max={100}
+          step={1}
+          className="input"
+          defaultValue={maxCompaniesPerUser}
+          required
+        />
+      </div>
+      <p className="text-xs text-muted">
+        A person can create another company only while they own fewer than this many (a pending
+        application counts, a rejected one does not). Lowering the number never removes companies
+        that already exist.
+      </p>
+      <Err state={state} />
+      <Ok state={state} text="Company limit updated." />
+      <button type="submit" className="btn btn-primary" disabled={pending}>
+        {pending ? "Saving…" : "Save company limit"}
       </button>
     </form>
   );

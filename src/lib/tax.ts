@@ -50,21 +50,28 @@ export function computeTax(grossAmount: number, taxRateBp: number): TaxBreakdown
 export type InvoiceTotals = {
   subtotal: number;
   taxAmount: number;
+  /** What the buyer pays. Equal to `subtotal`: the buyer never pays tax on top. */
   total: number;
+  /** What the company receives: `total - taxAmount`. */
+  netAmount: number;
   taxRateBpApplied: number;
 };
 
 /**
- * ADD-ON tax, used only by invoices.
+ * Tax on an invoice is taken from the COMPANY's proceeds, not added on top.
  *
- * An invoice quotes a price (`subtotal`) and adds tax on top, so the buyer
- * pays `total = subtotal + tax` and the company receives the full subtotal it
- * quoted. That is what spec §24 describes with its "subtotal → tax → total
- * payable" breakdown, and it is how invoicing normally works.
+ * An invoice quotes a price (`subtotal`). The buyer pays exactly that price
+ * (`total = subtotal`). The tax is deducted from it: the Government treasury
+ * receives `taxAmount`, and the company receives `netAmount = total - tax`.
+ * Example: a 500 invoice at 5% -> buyer pays 500, tax 25, company receives 475.
  *
- * The resulting ledger row still satisfies the system-wide invariant
+ * (Invoices created BEFORE this rule were "add-on": total = subtotal + tax and
+ * the company received the whole subtotal. Those old invoices are still paid
+ * exactly as quoted - see payInvoiceInTx in src/lib/invoices.ts.)
+ *
+ * The resulting ledger row satisfies the system-wide invariant
  * `gross = tax + net`, with gross = total (what the buyer paid) and
- * net = subtotal (what the company received) — so invoices need no special
+ * net = total - tax (what the company received) - so invoices need no special
  * case anywhere in the accounting or reconciliation code.
  */
 export function computeInvoiceTotals(subtotal: number, taxRateBp: number): InvoiceTotals {
@@ -77,7 +84,8 @@ export function computeInvoiceTotals(subtotal: number, taxRateBp: number): Invoi
   return {
     subtotal,
     taxAmount,
-    total: subtotal + taxAmount,
+    total: subtotal,
+    netAmount: subtotal - taxAmount,
     taxRateBpApplied: taxAmount > 0 ? taxRateBp : 0,
   };
 }

@@ -87,9 +87,9 @@ try {
   await seller.locator("form").getByText(/Total payable by/).waitFor({ timeout: 15000 });
   const quoteText = await mainText(seller);
   check(
-    "seller: server quote shows subtotal 800, tax 40 at 5.00%, total 840",
-    /Tax \(5\.00%\)/.test(quoteText) && /\b840\b/.test(quoteText) && /\b800\b/.test(quoteText),
-    quoteText.match(/Subtotal[\s\S]{0,200}/)?.[0],
+    "seller: server quote shows price 800, tax 40 at 5.00% paid by the company, total 800, you receive 760",
+    /Tax \(5\.00%\)/.test(quoteText) && /\b760\b/.test(quoteText) && /Total payable by[\s\S]{0,60}\b800\b/.test(quoteText),
+    quoteText.match(/Price[\s\S]{0,200}/)?.[0],
   );
   await seller.screenshot({ path: `${OUT}/02-invoice-quote-desktop.png`, fullPage: true });
 
@@ -136,14 +136,14 @@ try {
     "buyer: invoice detail shows issuer, item, subtotal, tax, total, dates and status",
     detail.includes(COMPANY) &&
       detail.includes(ITEM) &&
-      /Subtotal/.test(detail) &&
+      /Price/.test(detail) &&
       /Tax \(5\.00%\)/.test(detail) &&
       /Total payable/.test(detail) &&
       /Issued/.test(detail) &&
       /PENDING/.test(detail),
     detail.slice(0, 400),
   );
-  check("buyer: a valid unpaid invoice offers Pay", /Pay 840/.test(detail));
+  check("buyer: a valid unpaid invoice offers Pay", /Pay 800/.test(detail));
   check("buyer: no 'Paid' claim before paying", !/Invoice paid/.test(detail));
   await buyer.screenshot({ path: `${OUT}/06-invoice-detail-desktop.png`, fullPage: true });
 
@@ -164,7 +164,7 @@ try {
   await printPage.close();
 
   // Pay it.
-  await buyer.getByRole("button", { name: /^Pay 840/ }).click();
+  await buyer.getByRole("button", { name: /^Pay 800/ }).click();
   const confirmText = await mainText(buyer);
   check("buyer: confirm step names the payer wallet", /from your personal wallet/.test(confirmText));
   await buyer.getByRole("button", { name: "Confirm payment" }).click();
@@ -202,7 +202,7 @@ try {
   const afterPay = await mainText(buyer);
   check(
     "buyer: reloaded invoice is PAID and no longer offers Pay",
-    /PAID/.test(afterPay) && /has been paid/.test(afterPay) && !/Pay 840/.test(afterPay),
+    /PAID/.test(afterPay) && /has been paid/.test(afterPay) && !/Pay 800/.test(afterPay),
     afterPay.slice(0, 300),
   );
 
@@ -292,8 +292,8 @@ try {
   const coQuote = await mainText(seller);
   check(
     "seller: a company-recipient invoice is quoted against the resolved company",
-    /Total payable by Flow Fitness|Total payable by/.test(coQuote) && /\b105\b/.test(coQuote),
-    coQuote.match(/Subtotal[\s\S]{0,200}/)?.[0],
+    /Total payable by Flow Fitness|Total payable by/.test(coQuote) && /\b95\b/.test(coQuote),
+    coQuote.match(/Price[\s\S]{0,200}/)?.[0],
   );
   await seller.getByRole("button", { name: "Send invoice" }).click();
   await seller.locator("form").getByText("Invoice sent.").waitFor({ timeout: 20000 });
@@ -319,9 +319,9 @@ try {
   await seller.locator("form").getByText(/Total payable by/).waitFor({ timeout: 15000 });
   const govQuote = await mainText(seller);
   check(
-    "seller: a Government invoice is quoted tax-free (total = subtotal)",
+    "seller: a Government invoice is quoted tax-free (total = price)",
     /Tax \(0\.00%\)/.test(govQuote) && /Total payable by Government/.test(govQuote),
-    govQuote.match(/Subtotal[\s\S]{0,220}/)?.[0],
+    govQuote.match(/Price[\s\S]{0,220}/)?.[0],
   );
   await seller.screenshot({ path: `${OUT}/12-government-invoice-quote-desktop.png`, fullPage: true });
   await seller.getByRole("button", { name: "Send invoice" }).click();

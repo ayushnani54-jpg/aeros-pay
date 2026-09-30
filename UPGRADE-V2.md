@@ -171,9 +171,11 @@ requests that are already open as well as new ones.
 - **Company sales are tax-free.** The listing advertises a price and the seller
   receives exactly that. Taxing it would have meant the seller quietly got less
   than the advertised figure.
-- **Invoice tax is added on top.** An 800-Aeros invoice at 5% means the buyer
-  pays 840 and the company receives the full 800. Direct payments still work
-  the old way (tax comes out of the amount sent).
+- **Invoice tax comes out of the company's proceeds.** An 800-Aeros invoice at
+  5% means the buyer pays 800, the tax is 40 and the company receives 760.
+  (Earlier versions added the tax on top - buyer paid 840 - and invoices
+  issued back then are still payable exactly as quoted.) Direct payments work
+  the same way: tax comes out of the amount sent.
 - **A loan never creates Aeros.** The principal comes out of the treasury and
   repayments go back into it, so total supply is untouched by the entire loan
   lifecycle. Only an approved issuance ever increases supply.

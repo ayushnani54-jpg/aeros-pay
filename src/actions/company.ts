@@ -201,7 +201,10 @@ export type InvoiceQuote = {
   subtotal: number;
   taxRateBp: number;
   taxAmount: number;
+  /** What the buyer pays (equal to the price - tax is not added on top). */
   total: number;
+  /** What the company receives after the tax is deducted. */
+  netAmount: number;
 };
 
 /**
@@ -265,6 +268,7 @@ export async function quoteInvoiceAction(
         taxRateBp,
         taxAmount: totals.taxAmount,
         total: totals.total,
+        netAmount: totals.netAmount,
       },
     };
   } catch (e) {

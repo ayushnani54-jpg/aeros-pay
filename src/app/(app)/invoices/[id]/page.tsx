@@ -94,8 +94,8 @@ export default async function InvoiceDetailPage({ params }: PageProps<"/invoices
         {role.isIssuer && !role.isPayer && (
           <p className="mt-6 text-xs text-muted">
             You are viewing this as the issuer. When it is paid, the{" "}
-            {invoice.subtotal.toLocaleString()} {CURRENCY_NAME} lands in the {company.name} company
-            wallet.
+            {(invoice.total - invoice.taxAmount).toLocaleString()} {CURRENCY_NAME} left after tax
+            lands in the {company.name} company wallet.
           </p>
         )}
       </div>

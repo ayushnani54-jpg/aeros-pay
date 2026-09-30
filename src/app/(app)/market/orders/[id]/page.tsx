@@ -147,7 +147,7 @@ export default async function OrderPage({ params }: PageProps<"/market/orders/[i
               <h2 className="font-medium">Invoice {row.invoiceNumber}</h2>
               <p className="mt-1 text-sm text-muted">
                 {row.invoiceTotal !== null
-                  ? `${row.invoiceTotal.toLocaleString()} ${CURRENCY_NAME} payable, tax included.`
+                  ? `${row.invoiceTotal.toLocaleString()} ${CURRENCY_NAME} payable by the buyer.`
                   : "See the invoice for the payable total."}
               </p>
               {row.paidTxRef && (

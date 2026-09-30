@@ -88,7 +88,7 @@ export default async function MyOrdersPage({ searchParams }: PageProps<"/market/
                 </p>
                 <p className="mt-1 text-xs text-muted">
                   {row.order.quantity} × {row.order.unitPrice.toLocaleString()} ={" "}
-                  {row.order.subtotal.toLocaleString()} {CURRENCY_NAME} before tax ·{" "}
+                  {row.order.subtotal.toLocaleString()} {CURRENCY_NAME} ·{" "}
                   {formatDate(row.order.createdAt)}
                 </p>
                 {row.invoiceNumber && (

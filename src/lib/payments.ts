@@ -148,8 +148,9 @@ export type TransferOptions = {
   /** Overrides the resolved rate. Used by invoices (tax already computed) and
    * by tax-free administrative movements. */
   forcedTaxRateBp?: number;
-  /** Overrides the breakdown entirely — used by invoice settlement where tax
-   * was added on top of the quoted subtotal rather than deducted from it. */
+  /** Overrides the breakdown entirely — used by invoice settlement, where the
+   * tax was already fixed when the invoice was issued (and, for old add-on
+   * invoices, was added on top of the quoted subtotal). */
   forcedBreakdown?: TaxBreakdown;
   /**
    * WHICH KIND of movement this is, for the V3 tax matrix. It is a TypeScript

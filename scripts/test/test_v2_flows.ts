@@ -376,8 +376,8 @@ async function main() {
     unitPrice: 400,
   });
   check(
-    "invoice: subtotal 800, 5% tax on top = 40, total payable 840",
-    invoice.subtotal === 800 && invoice.taxAmount === 40 && invoice.total === 840,
+    "invoice: price 800, 5% tax = 40 taken from the company, total payable 800",
+    invoice.subtotal === 800 && invoice.taxAmount === 40 && invoice.total === 800,
     invoice,
   );
 
@@ -392,13 +392,13 @@ async function main() {
   const afterPay = await totals();
 
   check(
-    "invoice: buyer paid the full total (840)",
-    custAfterPay.balance === custBeforePay.balance - 840,
+    "invoice: buyer paid exactly the quoted price (800), no tax on top",
+    custAfterPay.balance === custBeforePay.balance - 800,
     { before: custBeforePay.balance, after: custAfterPay.balance },
   );
   check(
-    "invoice: company received the full quoted subtotal (800)",
-    coAfterPay.balance === coBeforePay.balance + 800,
+    "invoice: company received the price minus tax (760)",
+    coAfterPay.balance === coBeforePay.balance + 760,
     { before: coBeforePay.balance, after: coAfterPay.balance },
   );
   check(
@@ -491,8 +491,10 @@ async function main() {
     reason: "Moving on to a new project",
   });
   check(
-    "sale: valuation = lifetime sales x 1.5 (800 sales -> 1,200)",
-    listing.salesFigure === 800 && listing.multiplierBp === 15000 && listing.valuation === 1200,
+    // Lifetime sales = what the company actually received. The 800 invoice paid
+    // above leaves 760 after the 40 tax, so 760 x 1.5 = 1,140.
+    "sale: valuation = lifetime sales x 1.5 (760 received -> 1,140)",
+    listing.salesFigure === 760 && listing.multiplierBp === 15000 && listing.valuation === 1140,
     listing,
   );
 
@@ -546,12 +548,12 @@ async function main() {
 
   check(
     "sale: buyer's personal wallet paid the full valuation, untaxed",
-    buyerAfter.balance === buyerBefore.balance - 1200,
+    buyerAfter.balance === buyerBefore.balance - 1140,
     { before: buyerBefore.balance, after: buyerAfter.balance },
   );
   check(
     "sale: seller's personal wallet received the full valuation",
-    sellerAfter.balance === sellerBefore.balance + 1200,
+    sellerAfter.balance === sellerBefore.balance + 1140,
     { before: sellerBefore.balance, after: sellerAfter.balance },
   );
   check(
@@ -571,8 +573,8 @@ async function main() {
   check(
     "sale: a permanent sale record was written with price, sales figure and multiplier",
     !!record &&
-      record.price === 1200 &&
-      record.salesFigure === 800 &&
+      record.price === 1140 &&
+      record.salesFigure === 760 &&
       record.multiplierBp === 15000 &&
       record.txRef === purchase.txRef,
     record,

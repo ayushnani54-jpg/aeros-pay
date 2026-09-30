@@ -77,7 +77,8 @@ export function CreateInvoiceForm() {
       <div>
         <h3 className="font-medium">Create an invoice</h3>
         <p className="mt-1 text-sm text-muted">
-          Tax is added on top of your price, so you receive the full amount you quote.
+          The buyer pays exactly the price you quote. The tax is taken out of what your company
+          receives.
         </p>
       </div>
 
@@ -191,7 +192,7 @@ export function CreateInvoiceForm() {
       {subtotal > 0 && (
         <dl className="space-y-1 rounded-md bg-surface p-3 text-sm">
           <div className="flex justify-between">
-            <dt className="text-muted">Subtotal</dt>
+            <dt className="text-muted">Price</dt>
             <dd>
               {subtotal.toLocaleString()} {CURRENCY_NAME}
             </dd>
@@ -199,7 +200,9 @@ export function CreateInvoiceForm() {
           {quote ? (
             <>
               <div className="flex justify-between">
-                <dt className="text-muted">Tax ({(quote.taxRateBp / 100).toFixed(2)}%)</dt>
+                <dt className="text-muted">
+                  Tax ({(quote.taxRateBp / 100).toFixed(2)}%) — paid by your company
+                </dt>
                 <dd>
                   {quote.taxAmount.toLocaleString()} {CURRENCY_NAME}
                 </dd>
@@ -213,7 +216,7 @@ export function CreateInvoiceForm() {
               <div className="flex justify-between text-xs text-muted">
                 <dt>You receive</dt>
                 <dd>
-                  {quote.subtotal.toLocaleString()} {CURRENCY_NAME}
+                  {quote.netAmount.toLocaleString()} {CURRENCY_NAME}
                 </dd>
               </div>
             </>
@@ -296,8 +299,7 @@ export function PayInvoiceButton({
           {state.data.invoiceNumber} · {state.data.total.toLocaleString()} {CURRENCY_NAME}
         </p>
         <p className="mt-1 text-xs text-muted">
-          Paid to @{state.data.paidToUsername} · tax {state.data.taxAmount.toLocaleString()}{" "}
-          {CURRENCY_NAME}
+          Paid to @{state.data.paidToUsername}
         </p>
         <p className="mt-1 font-mono text-xs text-muted">Ref {state.data.txRef}</p>
         {state.data.replayed && (

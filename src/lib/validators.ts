@@ -557,6 +557,15 @@ export const economyPolicySchema = z.object({
     .max(365, "Must be at most 365."),
 });
 
+/** Government-set limit on how many companies one person may own at once. */
+export const maxCompaniesPolicySchema = z.object({
+  maxCompaniesPerUser: z.coerce
+    .number({ error: "Enter a whole number." })
+    .int("Enter a whole number.")
+    .min(1, "Must be at least 1.")
+    .max(100, "Must be at most 100."),
+});
+
 /** V2.1: text-field scrubbing ages, one per data class. Empty = never scrub
  * that class. */
 export const textScrubSettingsSchema = z.object({

@@ -1,7 +1,7 @@
 import "server-only";
 import { db } from "@/db/client";
 import { companies, government, users } from "@/db/schema";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { COMPANY_DESCRIPTION_MAX_WORDS } from "./constants";
 import { isUniqueViolation } from "./db-errors";
 import { recordAudit } from "./audit";
@@ -37,6 +37,41 @@ export function assertDescriptionWithinLimit(description: string): void {
 // ---------------------------------------------------------------------------
 // Application
 // ---------------------------------------------------------------------------
+
+/** Company statuses that count toward the Government's per-person limit.
+ * REJECTED and REVOKED companies are finished, so they do not use up a slot. */
+const LIMIT_COUNTED_STATUSES = ["PENDING", "APPROVED", "SUSPENDED"] as const;
+
+/**
+ * How many companies this person owns (for the limit), the Government's
+ * current limit, and whether one more may be created. Pure read.
+ */
+export async function getCompanyAllowance(
+  executor: Pick<typeof db, "select">,
+  ownerUserId: string,
+): Promise<{ owned: number; max: number; canCreate: boolean }> {
+  const [policy] = await executor
+    .select({ maxCompaniesPerUser: government.maxCompaniesPerUser })
+    .from(government)
+    .limit(1);
+  const max = policy?.maxCompaniesPerUser ?? 1;
+  const [row] = await executor
+    .select({ owned: sql<number>`count(*)::int` })
+    .from(companies)
+    .where(
+      and(
+        eq(companies.ownerUserId, ownerUserId),
+        inArray(companies.status, [...LIMIT_COUNTED_STATUSES]),
+      ),
+    );
+  const owned = row?.owned ?? 0;
+  return { owned, max, canCreate: owned < max };
+}
+
+/** Same as getCompanyAllowance, for pages (reads with the normal connection). */
+export function getMyCompanyAllowance(ownerUserId: string) {
+  return getCompanyAllowance(db, ownerUserId);
+}
 
 export async function applyForCompany(params: {
   ownerUserId: string;
@@ -79,6 +114,18 @@ export async function applyForCompany(params: {
     if (existingPending) {
       throw new CompanyError(
         "You already have a company application awaiting Government review.",
+      );
+    }
+
+    // Government-set limit on companies per person. The owner row is already
+    // locked above, so two applications from the same person cannot both slip
+    // under the limit.
+    const allowance = await getCompanyAllowance(tx, ownerUserId);
+    if (!allowance.canCreate) {
+      throw new CompanyError(
+        allowance.max === 1
+          ? "You already own a company. The Government currently allows 1 company per person."
+          : `You already own ${allowance.owned} of the ${allowance.max} companies the Government allows per person.`,
       );
     }
 

@@ -47,7 +47,8 @@ const COMPANY_TAX_BP = Number(
 );
 await _pg.end();
 const TAX = Math.floor((SUBTOTAL * COMPANY_TAX_BP) / 10000);
-const TOTAL = SUBTOTAL + TAX;
+// The buyer pays exactly the price; the tax comes out of the seller company's proceeds.
+const TOTAL = SUBTOTAL;
 
 let pass = 0;
 let fail = 0;
@@ -292,7 +293,7 @@ try {
     dueBucket.slice(0, 500),
   );
   check(
-    `seller: the invoice was raised from the order for ${TOTAL} (subtotal ${SUBTOTAL} + ${TAX} tax)`,
+    `seller: the invoice was raised from the order for ${TOTAL} (price ${SUBTOTAL}; ${TAX} tax comes out of the seller's share)`,
     dueBucket.includes(String(TOTAL)),
     dueBucket.slice(0, 500),
   );

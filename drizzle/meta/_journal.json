@@ -50,6 +50,13 @@
       "when": 1790687930755,
       "tag": "0006_offline_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790765300184,
+      "tag": "0007_max_companies",
+      "breakpoints": true
     }
   ]
 }

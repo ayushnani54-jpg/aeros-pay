@@ -872,11 +872,11 @@ async function main() {
     issued.invoice,
   );
   check(
-    "order → invoice: subtotal is the order's snapshot and tax is added ON TOP at 5%",
+    "order → invoice: subtotal is the order's snapshot; 5% tax is taken from the company (buyer still pays 400)",
     issued.invoice.subtotal === 400 &&
       issued.invoice.taxRateBp === 500 &&
       issued.invoice.taxAmount === 20 &&
-      issued.invoice.total === 420,
+      issued.invoice.total === 400,
     issued.invoice,
   );
   await invariant("raising an order's invoice");
@@ -909,13 +909,13 @@ async function main() {
     receipt,
   );
   check(
-    "payment: the buyer paid the full total (400 + 20 tax = 420)",
-    (await balanceOfUser(buyerA.id)) === buyerAStart - 420,
+    "payment: the buyer paid exactly the price (400) - no tax on top",
+    (await balanceOfUser(buyerA.id)) === buyerAStart - 400,
     { before: buyerAStart, after: await balanceOfUser(buyerA.id) },
   );
   check(
-    "payment: the SELLER COMPANY wallet received the 400 subtotal",
-    (await balanceOfCompany(seller.id)) === sellerStart + 400,
+    "payment: the SELLER COMPANY wallet received the price minus tax (380)",
+    (await balanceOfCompany(seller.id)) === sellerStart + 380,
     { before: sellerStart, after: await balanceOfCompany(seller.id) },
   );
   check(
@@ -942,9 +942,9 @@ async function main() {
       paidTx.senderId === buyerA.id &&
       paidTx.receiverType === "COMPANY" &&
       paidTx.receiverId === seller.id &&
-      paidTx.grossAmount === 420 &&
+      paidTx.grossAmount === 400 &&
       paidTx.taxAmount === 20 &&
-      paidTx.netAmount === 400,
+      paidTx.netAmount === 380,
     paidTx,
   );
   await invariant("paying an order's invoice");
@@ -986,7 +986,7 @@ async function main() {
   check(
     "company buyer: the buying company's wallet paid and the selling company's wallet received",
     (await balanceOfCompany(buyerCompany.id)) === buyerCoStart - coIssued.invoice.total &&
-      (await balanceOfCompany(seller.id)) === sellerBefore2 + coIssued.invoice.subtotal,
+      (await balanceOfCompany(seller.id)) === sellerBefore2 + (coIssued.invoice.total - coIssued.invoice.taxAmount),
     {
       buyerBefore: buyerCoStart,
       buyerAfter: await balanceOfCompany(buyerCompany.id),
@@ -1196,7 +1196,7 @@ async function main() {
   check(
     "rejection: the duplicate moved no money — one debit, one credit, one tax",
     (await balanceOfUser(buyerA.id)) === buyerABeforeDup - dupInvoice.total &&
-      (await balanceOfCompany(seller.id)) === sellerBeforeDup + dupInvoice.subtotal,
+      (await balanceOfCompany(seller.id)) === sellerBeforeDup + (dupInvoice.total - dupInvoice.taxAmount),
   );
   const dupLedger = await db
     .select({ id: transactions.id })
@@ -1474,7 +1474,7 @@ async function main() {
   check(
     "routing: the genuine payment landed in the company wallet, not the owner's",
     attackReceipt.settledTo.companyId === seller.id &&
-      (await balanceOfCompany(seller.id)) === sellerBeforeAttack + attackInvoice.subtotal &&
+      (await balanceOfCompany(seller.id)) === sellerBeforeAttack + (attackInvoice.total - attackInvoice.taxAmount) &&
       (await balanceOfUser(sellerOwner.id)) === ownerBefore,
   );
   await invariant("the anti-tax-routing attempts and the genuine payment");

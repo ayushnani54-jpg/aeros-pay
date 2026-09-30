@@ -7,6 +7,7 @@ import { badgesOf } from "@/lib/badges";
 import { PaymentSoundToggle } from "@/components/payment-sound";
 import { CompanyStatusBadge } from "@/components/status-badge";
 import { getOwnedCompanies } from "@/lib/auth";
+import { getMyCompanyAllowance } from "@/lib/companies";
 import { effectiveUserStatus, formatSuspensionRemaining } from "@/lib/status";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { formatDate, formatDateTime } from "@/lib/datetime";
@@ -17,6 +18,7 @@ export default async function ProfilePage() {
 
   const { user } = ctx;
   const companies = await getOwnedCompanies(user.id);
+  const allowance = await getMyCompanyAllowance(user.id);
   const status = effectiveUserStatus(user);
   const badges = badgesOf(user);
 
@@ -100,6 +102,13 @@ export default async function ProfilePage() {
               </div>
             ))}
           </div>
+        )}
+        {companies.length > 0 && allowance.canCreate && !companies.some((c) => c.status === "PENDING") && (
+          <p className="mt-3 text-sm">
+            <Link href="/my-company/new" className="underline">
+              Create another company
+            </Link>
+          </p>
         )}
       </section>
     </div>

@@ -4,6 +4,7 @@ import { TaxRateForm } from "@/components/forms/tax-rate-form";
 import {
   CompanyDefaultTaxForm,
   EconomyPolicyForm,
+  MaxCompaniesPolicyForm,
   OfflinePolicyForm,
 } from "@/components/forms/gov-forms";
 import { formatTaxRateBp } from "@/lib/tax";
@@ -31,6 +32,7 @@ export default async function GovTaxPage() {
       "COMPANY_TAX_DEFAULT_CHANGED",
       "COMPANY_TAX_RATE_CHANGED",
       "ECONOMY_POLICY_CHANGED",
+      "MAX_COMPANIES_POLICY_CHANGED",
     ].includes(log.action),
   );
 
@@ -79,6 +81,15 @@ export default async function GovTaxPage() {
       </section>
 
       <section className="card p-5">
+        <h2 className="mb-1 font-medium">Companies per person</h2>
+        <p className="mb-4 text-sm text-muted">
+          How many companies one person may own at the same time. Every new company still needs
+          Government approval, exactly like the first one.
+        </p>
+        <MaxCompaniesPolicyForm maxCompaniesPerUser={gov.maxCompaniesPerUser} />
+      </section>
+
+      <section className="card p-5">
         <h2 className="mb-1 font-medium">Offline payments (PWA)</h2>
         <p className="mb-4 text-sm text-muted">
           Controls whether a personal wallet may fetch a short offline authorization while online
@@ -104,7 +115,7 @@ export default async function GovTaxPage() {
           <Rule rule="Company → Company" value="The sending company's rate" />
           <Rule rule="Government → anyone" value="Tax-free" />
           <Rule rule="Anyone → Government" value="Tax-free" />
-          <Rule rule="Invoices" value="Company rate, added on top of the quoted price" />
+          <Rule rule="Invoices" value="Company rate, taken out of the company's proceeds (the buyer pays only the quoted price)" />
         </dl>
       </section>
 

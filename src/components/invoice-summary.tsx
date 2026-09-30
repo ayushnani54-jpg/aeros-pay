@@ -21,6 +21,9 @@ export function InvoiceSummary({
   recipient: InvoiceRecipientSummary;
   showBadge?: boolean;
 }) {
+  // Invoices issued before "the company pays the tax" quote the tax on top
+  // (total = subtotal + tax). They are shown the way they were issued.
+  const isAddOn = invoice.taxAmount > 0 && invoice.total !== invoice.subtotal;
   return (
     <>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -50,22 +53,41 @@ export function InvoiceSummary({
           label="Unit price"
           value={`${invoice.unitPrice.toLocaleString()} ${CURRENCY_NAME}`}
         />
-        <Row label="Subtotal" value={`${invoice.subtotal.toLocaleString()} ${CURRENCY_NAME}`} />
-        <Row
-          label={`Tax (${formatTaxRateBp(invoice.taxRateBp)})`}
-          value={`${invoice.taxAmount.toLocaleString()} ${CURRENCY_NAME}`}
-        />
+        {isAddOn ? (
+          <>
+            <Row label="Subtotal" value={`${invoice.subtotal.toLocaleString()} ${CURRENCY_NAME}`} />
+            <Row
+              label={`Tax (${formatTaxRateBp(invoice.taxRateBp)})`}
+              value={`${invoice.taxAmount.toLocaleString()} ${CURRENCY_NAME}`}
+            />
+          </>
+        ) : (
+          <>
+            <Row label="Price" value={`${invoice.subtotal.toLocaleString()} ${CURRENCY_NAME}`} />
+            <Row
+              label={`Tax (${formatTaxRateBp(invoice.taxRateBp)}) — paid by the company`}
+              value={`${invoice.taxAmount.toLocaleString()} ${CURRENCY_NAME}`}
+            />
+          </>
+        )}
         <div className="flex justify-between border-t border-border pt-2 text-base font-semibold">
           <dt>Total payable</dt>
           <dd>
             {invoice.total.toLocaleString()} {CURRENCY_NAME}
           </dd>
         </div>
+        {!isAddOn && (
+          <Row
+            label={`${company.name} receives`}
+            value={`${(invoice.total - invoice.taxAmount).toLocaleString()} ${CURRENCY_NAME}`}
+          />
+        )}
       </dl>
 
       <p className="mt-3 text-xs text-muted">
-        Tax is added on top of the quoted price, so {company.name} receives the full{" "}
-        {invoice.subtotal.toLocaleString()} {CURRENCY_NAME} and the tax goes to the Government.
+        {isAddOn
+          ? `Tax is added on top of the quoted price, so ${company.name} receives the full ${invoice.subtotal.toLocaleString()} ${CURRENCY_NAME} and the tax goes to the Government. `
+          : `The buyer pays only the price. The tax is taken out of what ${company.name} receives and goes to the Government. `}
         These amounts were fixed when the invoice was issued and do not change.
       </p>
 

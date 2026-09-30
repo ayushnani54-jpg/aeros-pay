@@ -7,7 +7,9 @@
  *      from a username plus an explicit type; a Government invoice resolves to
  *      the Treasury even when a real user's handle is passed alongside it.
  *   2. END-TO-END PAYMENT — each of the three recipient types is invoiced and
- *      paid, with the exact wallet movements and tax-ON-TOP checked.
+ *      paid, with the exact wallet movements checked (the buyer pays the
+ *      quoted price; the tax comes out of the company's proceeds). Invoices
+ *      issued under the older add-on rule are still paid as quoted.
  *   3. TAX SNAPSHOT IMMUTABILITY — the matrix is changed AFTER issue and the
  *      invoice's amounts, and the resulting payment, are unchanged.
  *   4. ANTI-TAX-ROUTING — every route a caller could take to make a company
@@ -412,11 +414,11 @@ async function main() {
     note: "Thanks for your order",
   });
   check(
-    "user invoice: subtotal 800, 5% tax ADDED ON TOP = 40, total payable 840",
+    "user invoice: price 800, 5% tax = 40 TAKEN FROM THE COMPANY, total payable 800 (no tax on top)",
     invUser.subtotal === 800 &&
       invUser.taxRateBp === 500 &&
       invUser.taxAmount === 40 &&
-      invUser.total === 840,
+      invUser.total === 800,
     invUser,
   );
   check(
@@ -438,12 +440,12 @@ async function main() {
   check("user invoice: receipt carries a real transaction reference", !!receipt.txRef, receipt.txRef);
   check("user invoice: marked PAID only after the transfer", receipt.invoice.status === "PAID");
   check(
-    "user invoice: payer debited exactly the total (840)",
-    (await balanceOfUser(payerUser.id)) === payerBefore - 840,
+    "user invoice: payer debited exactly the quoted price (800)",
+    (await balanceOfUser(payerUser.id)) === payerBefore - 800,
   );
   check(
-    "user invoice: ISSUING COMPANY credited the full quoted subtotal (800)",
-    (await balanceOfCompany(issuer.id)) === issuerBefore + 800,
+    "user invoice: ISSUING COMPANY credited the price minus tax (760)",
+    (await balanceOfCompany(issuer.id)) === issuerBefore + 760,
   );
   check(
     "user invoice: the owner's PERSONAL wallet received nothing",
@@ -455,11 +457,11 @@ async function main() {
   );
   const userLedger = await ledgerRowsFor(invUser.id);
   check(
-    "user invoice: exactly one ledger row, gross=total tax=snapshot net=subtotal",
+    "user invoice: exactly one ledger row, gross=total tax=snapshot net=total-tax",
     userLedger.length === 1 &&
-      userLedger[0].grossAmount === 840 &&
+      userLedger[0].grossAmount === 800 &&
       userLedger[0].taxAmount === 40 &&
-      userLedger[0].netAmount === 800 &&
+      userLedger[0].netAmount === 760 &&
       userLedger[0].receiverType === "COMPANY" &&
       userLedger[0].receiverId === issuer.id,
     userLedger,
@@ -469,6 +471,106 @@ async function main() {
     userLedger[0].txRef === receipt.txRef && receipt.invoice.paidTxRef === receipt.txRef,
   );
   await invariant("paying a user invoice");
+
+  // ==========================================================================
+  console.log("\n=== 2b. OLD ADD-ON INVOICES ARE STILL PAYABLE, EXACTLY AS QUOTED ===\n");
+  // ==========================================================================
+  // Before the "company pays the tax" rule an invoice was total = subtotal + tax.
+  // A pending one of those may still exist in the live database.
+
+  // These extra payments must not eat the balance the later sections rely on.
+  await transfer({
+    from: governmentWallet(gov.id),
+    to: userWallet(payerUser.id),
+    amount: 2000,
+    forcedTaxRateBp: 0,
+    type: "GOVERNMENT_FUNDING",
+    reason: "test top-up for the legacy/example invoices",
+  });
+
+  const [legacy] = await db
+    .insert(invoices)
+    .values({
+      invoiceNumber: `INV-LEGACY-${Date.now()}`,
+      companyId: issuer.id,
+      recipientType: "USER",
+      buyerUserId: payerUser.id,
+      itemName: "Old add-on invoice",
+      quantity: 1,
+      unitPrice: 800,
+      subtotal: 800,
+      taxRateBp: 500,
+      taxAmount: 40,
+      total: 840,
+    })
+    .returning();
+  const legPayerBefore = await balanceOfUser(payerUser.id);
+  const legIssuerBefore = await balanceOfCompany(issuer.id);
+  const legTreasuryBefore = await treasuryBalance();
+  const legReceipt = await payInvoice({ invoiceId: legacy.id, payer: userWallet(payerUser.id) });
+  check("legacy invoice: still payable", legReceipt.invoice.status === "PAID" && !!legReceipt.txRef);
+  check(
+    "legacy invoice: payer pays 840 as quoted, company receives the full 800, treasury 40",
+    (await balanceOfUser(payerUser.id)) === legPayerBefore - 840 &&
+      (await balanceOfCompany(issuer.id)) === legIssuerBefore + 800 &&
+      (await treasuryBalance()) === legTreasuryBefore + 40,
+  );
+  const legLedger = await ledgerRowsFor(legacy.id);
+  check(
+    "legacy invoice: ledger row gross 840 = tax 40 + net 800",
+    legLedger.length === 1 &&
+      legLedger[0].grossAmount === 840 &&
+      legLedger[0].taxAmount === 40 &&
+      legLedger[0].netAmount === 800,
+    legLedger,
+  );
+  await invariant("paying a legacy add-on invoice");
+
+  // An invoice whose numbers fit neither shape is still refused.
+  const [broken] = await db
+    .insert(invoices)
+    .values({
+      invoiceNumber: `INV-BROKEN-${Date.now()}`,
+      companyId: issuer.id,
+      recipientType: "USER",
+      buyerUserId: payerUser.id,
+      itemName: "Inconsistent invoice",
+      quantity: 1,
+      unitPrice: 800,
+      subtotal: 800,
+      taxRateBp: 500,
+      taxAmount: 40,
+      total: 999,
+    })
+    .returning();
+  await expectError(
+    "legacy invoice: an inconsistent invoice (total fits neither rule) cannot be paid",
+    () => payInvoice({ invoiceId: broken.id, payer: userWallet(payerUser.id) }),
+    "inconsistent",
+  );
+  await db.update(invoices).set({ status: "CANCELLED", cancelledAt: new Date() }).where(eq(invoices.id, broken.id));
+
+  // The example from the request: a 500 invoice at 5% -> buyer 500, tax 25, company 475.
+  const inv500 = await createInvoice({
+    company: issuer,
+    recipientType: "USER",
+    recipientUsername: payerUser.username,
+    itemName: "Example 500",
+    quantity: 1,
+    unitPrice: 500,
+  });
+  const ex1 = await balanceOfUser(payerUser.id);
+  const ex2 = await balanceOfCompany(issuer.id);
+  const ex3 = await treasuryBalance();
+  await payInvoice({ invoiceId: inv500.id, payer: userWallet(payerUser.id) });
+  check(
+    "example: 500 @5% -> buyer pays 500, tax 25, company receives 475",
+    inv500.total === 500 &&
+      (await balanceOfUser(payerUser.id)) === ex1 - 500 &&
+      (await balanceOfCompany(issuer.id)) === ex2 + 475 &&
+      (await treasuryBalance()) === ex3 + 25,
+  );
+  await invariant("paying the 500 example invoice");
 
   // ==========================================================================
   console.log("\n=== 3. INVOICE TO A COMPANY, PAID END TO END ===\n");
@@ -483,8 +585,8 @@ async function main() {
     unitPrice: 250,
   });
   check(
-    "company invoice: subtotal 1000, tax on top 50, total 1050",
-    invCo.subtotal === 1000 && invCo.taxAmount === 50 && invCo.total === 1050,
+    "company invoice: price 1000, tax 50 taken from the company, total 1000",
+    invCo.subtotal === 1000 && invCo.taxAmount === 50 && invCo.total === 1000,
     invCo,
   );
   check(
@@ -511,16 +613,16 @@ async function main() {
     payer: companyWallet(payerCompany.id),
   });
   check(
-    "company invoice: paying company debited the total (1050)",
-    (await balanceOfCompany(payerCompany.id)) === payerCoBefore - 1050,
+    "company invoice: paying company debited the quoted price (1000)",
+    (await balanceOfCompany(payerCompany.id)) === payerCoBefore - 1000,
   );
   check(
     "company invoice: the paying company's OWNER was not debited",
     (await balanceOfUser(coOwner.id)) === coOwnerBefore,
   );
   check(
-    "company invoice: issuing company credited the subtotal (1000)",
-    (await balanceOfCompany(issuer.id)) === issuerBefore2 + 1000,
+    "company invoice: issuing company credited the price minus tax (950)",
+    (await balanceOfCompany(issuer.id)) === issuerBefore2 + 950,
   );
   check(
     "company invoice: treasury received the tax (50)",
@@ -593,8 +695,8 @@ async function main() {
     unitPrice: 1000,
   });
   check(
-    "snapshot: issued at the live 5% rate — tax 50, total 1050",
-    snapInvoice.taxRateBp === 500 && snapInvoice.taxAmount === 50 && snapInvoice.total === 1050,
+    "snapshot: issued at the live 5% rate — tax 50, total 1000",
+    snapInvoice.taxRateBp === 500 && snapInvoice.taxAmount === 50 && snapInvoice.total === 1000,
     snapInvoice,
   );
 
@@ -614,7 +716,7 @@ async function main() {
     "snapshot: a matrix change does NOT re-price the already-issued invoice",
     afterMatrixChange.taxRateBp === 500 &&
       afterMatrixChange.taxAmount === 50 &&
-      afterMatrixChange.total === 1050 &&
+      afterMatrixChange.total === 1000 &&
       afterMatrixChange.subtotal === 1000,
     afterMatrixChange,
   );
@@ -630,10 +732,10 @@ async function main() {
     unitPrice: 1000,
   });
   check(
-    "snapshot: a NEW invoice issued after the change uses the new 40% rate",
+    "snapshot: a NEW invoice issued after the change uses the new 40% rate (buyer still pays 1000)",
     postChangeInvoice.taxRateBp === 4000 &&
       postChangeInvoice.taxAmount === 400 &&
-      postChangeInvoice.total === 1400,
+      postChangeInvoice.total === 1000,
     postChangeInvoice,
   );
 
@@ -647,21 +749,21 @@ async function main() {
   });
   const snapLedger = await ledgerRowsFor(snapInvoice.id);
   check(
-    "snapshot: the PAYMENT charges the snapshot, not the new rate (1050 / 50 / 1000)",
+    "snapshot: the PAYMENT charges the snapshot, not the new rate (1000 / 50 / 950)",
     snapLedger.length === 1 &&
-      snapLedger[0].grossAmount === 1050 &&
+      snapLedger[0].grossAmount === 1000 &&
       snapLedger[0].taxAmount === 50 &&
-      snapLedger[0].netAmount === 1000 &&
+      snapLedger[0].netAmount === 950 &&
       snapLedger[0].taxRateBpApplied === 500,
     snapLedger,
   );
   check(
     "snapshot: wallet movements match the snapshot exactly",
-    (await balanceOfUser(payerUser.id)) === snapPayerBefore - 1050 &&
-      (await balanceOfCompany(issuer.id)) === snapIssuerBefore + 1000 &&
+    (await balanceOfUser(payerUser.id)) === snapPayerBefore - 1000 &&
+      (await balanceOfCompany(issuer.id)) === snapIssuerBefore + 950 &&
       (await treasuryBalance()) === snapTreasuryBefore + 50,
   );
-  check("snapshot: receipt reflects the snapshot total", snapReceipt.invoice.total === 1050);
+  check("snapshot: receipt reflects the snapshot total", snapReceipt.invoice.total === 1000);
   await invariant("paying a snapshotted invoice after a matrix change");
 
   // Clean up the matrix cell so the rest of the suite (and the app) is back to
@@ -821,7 +923,7 @@ async function main() {
   });
   check(
     "routing ATTACK 5: destination-shaped fields passed to payInvoice are inert — money went to the COMPANY",
-    (await balanceOfCompany(issuer.id)) === smuggleCompanyBefore + routeInvoice.subtotal &&
+    (await balanceOfCompany(issuer.id)) === smuggleCompanyBefore + (routeInvoice.total - routeInvoice.taxAmount) &&
       (await balanceOfUser(issuerOwner.id)) === smuggleOwnerBefore,
     {
       company: await balanceOfCompany(issuer.id),
@@ -840,7 +942,7 @@ async function main() {
   check(
     "routing: no attack moved anything — owner and company balances only changed by the real payment",
     (await balanceOfUser(issuerOwner.id)) === ownerBeforeAttack &&
-      (await balanceOfCompany(issuer.id)) === companyBeforeAttack + routeInvoice.subtotal,
+      (await balanceOfCompany(issuer.id)) === companyBeforeAttack + (routeInvoice.total - routeInvoice.taxAmount),
   );
   await invariant("the routing attack battery");
 
