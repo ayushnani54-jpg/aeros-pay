@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   PROTECTED_TABLE_NAMES,
   getRetentionSettings,
@@ -15,6 +16,7 @@ import {
   TextScrubSettingsForm,
   V3RetentionSettingsForm,
 } from "@/components/forms/gov-forms";
+import { GovV4RetentionSettingsForm } from "@/components/v4/v4-forms";
 import { formatDateTime } from "@/lib/datetime";
 
 /**
@@ -41,12 +43,17 @@ export default async function GovRetentionPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Data retention & cleanup</h1>
-        <p className="mt-1 text-sm text-muted">
-          Control how long temporary data is kept. Financial records are never covered by
-          retention.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Data retention &amp; cleanup</h1>
+          <p className="mt-1 text-sm text-muted">
+            Control how long temporary data is kept, and configure V4 Archive-Before-Clearing
+            policies.
+          </p>
+        </div>
+        <Link href="/gov/archive" className="btn btn-primary text-xs">
+          Open Archive Center (.zip)
+        </Link>
       </div>
 
       <section className="card border-[#111111] p-5">
@@ -68,21 +75,19 @@ export default async function GovRetentionPage() {
             </ul>
           </div>
           <div>
-            <p className="font-medium">Never deleted</p>
+            <p className="font-medium">Never deleted without verified checkpoint / protected</p>
             <ul className="mt-1 space-y-1 text-muted">
-              <li>• Transactions, taxes and the ledger</li>
-              <li>• Users, balances and companies</li>
-              <li>• Invoices, loans, repayments and issuance</li>
-              <li>• Treasury movements and company funding</li>
+              <li>• Authoritative balances, Treasury &amp; permanent supply (never deleted)</li>
+              <li>• Invoices, loans, repayments, issuance &amp; company sale records (never deleted)</li>
+              <li>• Category C transaction history (only via verified .zip Archive Center + immutable accounting checkpoint)</li>
               <li>• Company ownership, transfers and sale records</li>
-              <li>• Paid or completed orders</li>
+              <li>• Paid or completed marketplace orders</li>
               <li>• Audit log (archive only, never delete)</li>
             </ul>
             <p className="mt-2 text-xs text-muted">
-              This is structural, not a rule someone has to remember:{" "}
-              {PROTECTED_TABLE_NAMES.size} of the {PROTECTED_TABLE_NAMES.size + 11} tables in the
-              database are unreachable from any cleanup path, because cleanup can only act on the
-              tables named in its allowlist.
+              Automatic cleanup can only act on the {11} temporary targets in its allowlist;{" "}
+              {PROTECTED_TABLE_NAMES.size} protected tables are unreachable from any automatic
+              cleanup path.
             </p>
           </div>
         </div>
@@ -167,6 +172,33 @@ export default async function GovRetentionPage() {
           expiredContractRetentionDays={settings.expiredContractRetentionDays}
           promotionCampaignRetentionDays={settings.promotionCampaignRetentionDays}
           idempotencyKeyRetentionDays={settings.idempotencyKeyRetentionDays}
+        />
+      </section>
+
+      <section className="card border-[#111111] p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-medium">
+            V4 Archive-Before-Clearing Retention Windows
+          </h2>
+          <Link href="/gov/archive" className="text-xs font-medium underline">
+            Go to Archive Center →
+          </Link>
+        </div>
+        <p className="mt-1 mb-3 text-xs text-muted">
+          Default age windows for historical datasets in the Archive Center. Category C transaction
+          history, settled synthetic market orders, and closed refunds are NEVER deleted by the
+          automatic daily cron — they require generating a checksummed <span className="font-mono">.zip</span>{" "}
+          archive, verifying its manifest token, and writing an immutable accounting checkpoint.
+        </p>
+        <GovV4RetentionSettingsForm
+          settings={{
+            transactionHistoryRetentionDays:
+              settings.transactionHistoryRetentionDays ?? null,
+            settledOrderHistoryRetentionDays:
+              settings.settledOrderHistoryRetentionDays ?? null,
+            closedRefundRetentionDays: settings.closedRefundRetentionDays ?? null,
+            marketCandleRetentionDays: settings.marketCandleRetentionDays ?? 90,
+          }}
         />
       </section>
 

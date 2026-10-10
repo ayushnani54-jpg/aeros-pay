@@ -47,6 +47,7 @@ import {
   RATING_COMMENT_MAX_LENGTH,
   RATING_MAX_STARS,
   RATING_MIN_STARS,
+  ARCHIVE_CLEAR_CONFIRM_PHRASE,
 } from "./constants";
 
 // Normalizes user-typed usernames to their canonical lowercase form before
@@ -908,3 +909,184 @@ export const userBadgesSchema = z.object({
   official: formFlagSchema,
   member: formFlagSchema,
 });
+
+// ---------------------------------------------------------------------------
+// V4 — Feature Toggles, Aeros Exchange, Synthetic Market, Refund & Archive
+// ---------------------------------------------------------------------------
+
+export const v4FeatureTogglesSchema = z.object({
+  exchangeEnabled: formFlagSchema,
+  exchangeLivePaymentsEnabled: formFlagSchema,
+  marketEnabled: formFlagSchema,
+  tradingEnabled: formFlagSchema,
+  refundCenterEnabled: formFlagSchema,
+  retentionEnabled: formFlagSchema,
+  archiveCenterEnabled: formFlagSchema,
+});
+
+export const exchangePackagePolicySchema = z.object({
+  policyCode: z
+    .string()
+    .trim()
+    .transform((v) => v.toUpperCase())
+    .pipe(
+      z
+        .string()
+        .min(3, "Policy code must be at least 3 characters.")
+        .max(32, "Policy code must be at most 32 characters.")
+        .regex(/^[A-Z0-9_-]+$/, "Use uppercase letters, digits, hyphens, or underscores."),
+    ),
+  title: z.string().trim().min(2, "Title is required.").max(120),
+  description: z.string().trim().max(500).optional().or(z.literal("")),
+  inrPrice: z.coerce
+    .number()
+    .int("INR price must be a whole number.")
+    .min(1, "INR price must be at least ₹1.")
+    .max(1_000_000, "INR price is too high."),
+  aerosAmount: z.coerce
+    .number()
+    .int("Aeros amount must be a whole number.")
+    .min(1, "Aeros amount must be at least 1.")
+    .max(1_000_000, "Aeros amount is too high."),
+  bonusAeros: z.coerce
+    .number()
+    .int("Bonus Aeros must be a whole number.")
+    .min(0, "Bonus Aeros cannot be negative.")
+    .max(1_000_000, "Bonus Aeros is too high."),
+  active: formFlagSchema,
+  disclosureText: z
+    .string()
+    .trim()
+    .min(20, "Clear private virtual-economy disclosure text is required.")
+    .max(1000),
+});
+
+export const requestExchangePurchaseSchema = z.object({
+  policyId: z.string().uuid("Select a valid package."),
+  paymentReference: z
+    .string()
+    .trim()
+    .max(120, "Reference note is too long.")
+    .optional()
+    .or(z.literal("")),
+  acknowledgedDisclosure: formFlagSchema.refine(
+    (v) => v === true,
+    "You must acknowledge the private virtual-economy disclosure before proceeding.",
+  ),
+  idempotencyKey: z.string().trim().min(8).max(80).optional(),
+});
+
+export const reviewExchangePurchaseSchema = z.object({
+  purchaseId: z.string().uuid(),
+  decision: z.enum(["CREDITED", "CANCELLED"]),
+  reviewNote: z.string().trim().max(500).optional().or(z.literal("")),
+});
+
+export const marketConfigSchema = z
+  .object({
+    minPrice: z.coerce.number().int().min(1, "Minimum price must be at least 1 Aeros.").max(500_000),
+    maxPrice: z.coerce.number().int().min(2, "Maximum price must be at least 2 Aeros.").max(1_000_000),
+    baseVolatilityBp: z.coerce.number().int().min(10, "Min 0.10% (10 bp).").max(2500, "Max 25.00% (2500 bp)."),
+    demandSensitivityBp: z.coerce.number().int().min(0, "Min 0 bp.").max(1000, "Max 10.00% (1000 bp)."),
+    maxStepChangeBp: z.coerce.number().int().min(25, "Min 0.25% (25 bp).").max(3000, "Max 30.00% (3000 bp)."),
+    maxOrderUnits: z.coerce.number().int().min(1, "Min 1 unit.").max(100_000, "Max 100,000 units."),
+    userCooldownSeconds: z.coerce.number().int().min(0, "Min 0 seconds.").max(3600, "Max 3600 seconds."),
+  })
+  .refine((d) => d.maxPrice > d.minPrice, {
+    message: "Maximum price must be strictly greater than minimum price.",
+    path: ["maxPrice"],
+  });
+
+export const placeMarketOrderSchema = z.object({
+  side: z.enum(["BUY", "SELL"]),
+  quantity: z.coerce
+    .number()
+    .int("Quantity must be a whole number of units.")
+    .min(1, "Order quantity must be at least 1 unit.")
+    .max(100_000, "Order quantity is too large."),
+  expectedPrice: z.coerce
+    .number()
+    .int("Expected price must be a whole number.")
+    .min(1, "Expected price must be positive."),
+  maxSlippageBp: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(2000)
+    .default(200),
+  idempotencyKey: z.string().trim().min(8).max(80).optional(),
+});
+
+export const createRefundRequestSchema = z.object({
+  refundType: z.enum(["VIRTUAL_AEROS_REFUND", "EXCHANGE_PACKAGE_REFUND"]),
+  sourceTxRef: z.string().trim().max(32).optional().or(z.literal("")),
+  exchangePurchaseId: z.string().uuid().optional().or(z.literal("")),
+  requestedAerosAmount: z.coerce
+    .number()
+    .int("Amount must be a whole number of Aeros.")
+    .min(1, "Refund amount must be at least 1 Aeros.")
+    .max(1_000_000, "Refund amount exceeds limit."),
+  reason: z.string().trim().min(5, "Please provide a clear reason (at least 5 characters).").max(1000),
+  userNotes: z.string().trim().max(1000).optional().or(z.literal("")),
+  idempotencyKey: z.string().trim().min(8).max(80).optional(),
+});
+
+export const govRefundDecisionSchema = z.object({
+  refundId: z.string().uuid(),
+  nextStatus: z.enum([
+    "UNDER_REVIEW",
+    "DELAYED",
+    "APPROVED",
+    "PROCESSING",
+    "COMPLETED",
+    "REJECTED",
+  ]),
+  approvedAerosAmount: z
+    .string()
+    .trim()
+    .optional()
+    .or(z.literal("")),
+  governmentDecisionNote: z.string().trim().min(1, "A decision note is required.").max(1000),
+  delayReason: z.string().trim().max(500).optional().or(z.literal("")),
+  expectedResolutionDate: z.string().trim().optional().or(z.literal("")),
+  executeAerosTransfer: formFlagSchema,
+});
+
+export const v4RetentionSettingsSchema = z.object({
+  transactionHistoryRetentionDays: z.string().trim(),
+  settledOrderHistoryRetentionDays: z.string().trim(),
+  closedRefundRetentionDays: z.string().trim(),
+  marketCandleRetentionDays: z.string().trim(),
+});
+
+export const createArchiveBatchSchema = z.object({
+  datasetKey: z.enum([
+    "transactions_history",
+    "settled_market_orders",
+    "closed_refunds",
+    "old_market_candles",
+  ]),
+  olderThanDays: z.coerce
+    .number()
+    .int("Must be a whole number of days.")
+    .min(0, "Days cannot be negative.")
+    .max(3650, "Days cannot exceed 3650."),
+});
+
+export const verifyArchiveBatchSchema = z.object({
+  batchId: z.string().uuid(),
+  verificationToken: z.string().trim().min(4, "Enter the verification token from the archive manifest."),
+});
+
+export const clearArchiveBatchSchema = z.object({
+  batchId: z.string().uuid(),
+  verificationToken: z.string().trim().min(4, "Verification token is required."),
+  confirmPhrase: z
+    .string()
+    .trim()
+    .refine(
+      (v) => v === ARCHIVE_CLEAR_CONFIRM_PHRASE,
+      `Type the exact confirmation phrase: ${ARCHIVE_CLEAR_CONFIRM_PHRASE}`,
+    ),
+});
+

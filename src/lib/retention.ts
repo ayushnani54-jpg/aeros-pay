@@ -2,6 +2,7 @@ import "server-only";
 import { db } from "@/db/client";
 import {
   auditLogs,
+  government,
   invoices,
   issuanceRequests,
   loans,
@@ -432,6 +433,11 @@ export async function runTextScrub(params: {
   governmentId: string;
   governmentUsername: string;
 }): Promise<TextScrubResult> {
+  const [gov] = await db.select({ retentionEnabled: government.retentionEnabled }).from(government).limit(1);
+  if (gov && !gov.retentionEnabled) {
+    throw new RetentionError("Data retention is currently disabled in Government Feature Controls.");
+  }
+
   const settings = await getRetentionSettings();
 
   const transactionsScrubbed =
@@ -1024,6 +1030,26 @@ export async function runFullCleanup(
   params: { source: CleanupSource; governmentId?: string; governmentUsername?: string },
   opts: CleanupRunOptions = {},
 ): Promise<CleanupSummary> {
+  const [gov] = await db.select({ retentionEnabled: government.retentionEnabled }).from(government).limit(1);
+  if (gov && !gov.retentionEnabled) {
+    if (params.source === "GOVERNMENT") {
+      throw new RetentionError("Data retention is currently disabled in Government Feature Controls.");
+    }
+    const nowIso = (opts.now ?? new Date()).toISOString();
+    return {
+      startedAt: nowIso,
+      finishedAt: nowIso,
+      durationMs: 0,
+      source: params.source,
+      ok: true,
+      completed: true,
+      totalAffected: 0,
+      targets: [],
+      failures: [],
+      lastSuccessAt: null,
+    };
+  }
+
   const settings = await getRetentionSettings();
   const started = opts.now ?? new Date();
   const deadline = started.getTime() + (opts.budgetMs ?? CLEANUP_DEFAULT_BUDGET_MS);
@@ -1278,3 +1304,50 @@ export async function updateV3RetentionSettings(params: {
 
   return updated;
 }
+
+/**
+ * Updates V4 Archive-Before-Clearing retention periods (`retention_settings`).
+ * Note: Setting these periods only defines eligibility for creating Archive
+ * Batches in the Archive Center; rows are NEVER deleted without a verified
+ * archive batch and explicit Government confirmation (Spec §§8, 10, 11).
+ */
+export async function updateV4RetentionSettings(params: {
+  transactionHistoryRetentionDays: number | null;
+  settledOrderHistoryRetentionDays: number | null;
+  closedRefundRetentionDays: number | null;
+  marketCandleRetentionDays: number | null;
+  governmentId: string;
+  governmentUsername: string;
+}): Promise<RetentionSettings> {
+  const current = await getRetentionSettings();
+
+  const snapshot = (s: RetentionSettings) => ({
+    transactionHistory: s.transactionHistoryRetentionDays,
+    settledMarketOrders: s.settledOrderHistoryRetentionDays,
+    closedRefunds: s.closedRefundRetentionDays,
+    marketCandles: s.marketCandleRetentionDays,
+  });
+
+  const [updated] = await db
+    .update(retentionSettings)
+    .set({
+      transactionHistoryRetentionDays: params.transactionHistoryRetentionDays,
+      settledOrderHistoryRetentionDays: params.settledOrderHistoryRetentionDays,
+      closedRefundRetentionDays: params.closedRefundRetentionDays,
+      marketCandleRetentionDays: params.marketCandleRetentionDays,
+      updatedAt: new Date(),
+    })
+    .returning();
+
+  await recordAudit(db, {
+    action: "V4_RETENTION_SETTINGS_CHANGED",
+    actorType: "GOVERNMENT",
+    actorId: params.governmentId,
+    actorLabel: params.governmentUsername,
+    previousValue: JSON.stringify(snapshot(current)),
+    newValue: JSON.stringify(snapshot(updated)),
+  });
+
+  return updated;
+}
+

@@ -73,6 +73,12 @@ export const txTypeEnum = pgEnum("tx_type", [
   // deleted, so the ledger stays append-only (see the column's comment).
   "TRANSACTION_REVERSAL", // full reversal of an earlier transaction
   "TRANSACTION_ADJUSTMENT", // partial correction of an earlier transaction
+  // --- V4 ---
+  "EXCHANGE_PURCHASE", // government -> user, Aeros Exchange package acquisition
+  "MARKET_TRADE_BUY", // user/company -> government, Aeros Market synthetic index buy
+  "MARKET_TRADE_SELL", // government -> user/company, Aeros Market synthetic index sell
+  "REFUND_CREDIT", // government -> user/company, approved virtual Aeros refund credit
+  "REFUND_DEBIT", // user/company -> government, approved refund clawback/debit
 ]);
 
 export const voteChoiceEnum = pgEnum("vote_choice", ["APPROVE", "REJECT"]);
@@ -230,6 +236,48 @@ export const promotionStatusEnum = pgEnum("promotion_status", [
   "COMPLETED",
 ]);
 
+// --- V4 enums ---------------------------------------------------------------
+
+export const exchangePurchaseStatusEnum = pgEnum("exchange_purchase_status", [
+  "AWAITING_CONFIRMATION",
+  "CREDITED",
+  "CANCELLED",
+  "REFUNDED",
+]);
+
+export const marketOrderSideEnum = pgEnum("market_order_side", [
+  "BUY",
+  "SELL",
+]);
+
+export const marketOrderStatusEnum = pgEnum("market_order_status", [
+  "EXECUTED",
+  "REJECTED",
+  "CANCELLED",
+]);
+
+export const refundStatusEnum = pgEnum("refund_status", [
+  "PENDING",
+  "UNDER_REVIEW",
+  "DELAYED",
+  "APPROVED",
+  "PROCESSING",
+  "COMPLETED",
+  "REJECTED",
+]);
+
+export const refundTypeEnum = pgEnum("refund_type", [
+  "VIRTUAL_AEROS_REFUND",
+  "EXCHANGE_PACKAGE_REFUND",
+]);
+
+export const archiveBatchStatusEnum = pgEnum("archive_batch_status", [
+  "CREATED",
+  "DOWNLOADED",
+  "VERIFIED",
+  "CLEARED",
+]);
+
 // ---------------------------------------------------------------------------
 // Government (singleton row for V1 — schema allows future multi-admin use)
 // ---------------------------------------------------------------------------
@@ -334,6 +382,31 @@ export const government = pgTable("government", {
     withTimezone: true,
   }),
 
+  // --- V4: Government-enforced feature toggles ------------------------------
+  // Risky financial features default to disabled until explicitly configured
+  // by the Government (spec §4.E, §16).
+  exchangeEnabled: boolean("exchange_enabled").notNull().default(false),
+  /** False by default — live INR payment collection is never falsely claimed. */
+  exchangeLivePaymentsEnabled: boolean("exchange_live_payments_enabled").notNull().default(false),
+  marketEnabled: boolean("market_enabled").notNull().default(false),
+  tradingEnabled: boolean("trading_enabled").notNull().default(false),
+  refundCenterEnabled: boolean("refund_center_enabled").notNull().default(false),
+  retentionEnabled: boolean("retention_enabled").notNull().default(true),
+  archiveCenterEnabled: boolean("archive_center_enabled").notNull().default(false),
+  v4FeaturesUpdatedAt: timestamp("v4_features_updated_at", { withTimezone: true }),
+
+  // --- V4: Cumulative accounting & supply preservation (spec §8) ------------
+  /** Explicitly retired/burned Aeros removed from circulation. */
+  retiredSupply: integer("retired_supply").notNull().default(0),
+  /** Cumulative credits into the Government treasury from archived & cleared transactions. */
+  archivedCredits: integer("archived_credits").notNull().default(0),
+  /** Cumulative debits from the Government treasury from archived & cleared transactions. */
+  archivedDebits: integer("archived_debits").notNull().default(0),
+  /** Cumulative tax Aeros collected across archived & cleared transactions. */
+  archivedTaxCollected: integer("archived_tax_collected").notNull().default(0),
+  /** Number of archived & cleared transactions that involved the Government treasury. */
+  archivedTxCount: integer("archived_tx_count").notNull().default(0),
+
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -372,6 +445,11 @@ export const government = pgTable("government", {
     "government_max_companies_per_user_bounds",
     sql`${t.maxCompaniesPerUser} >= 1 AND ${t.maxCompaniesPerUser} <= 100`,
   ),
+  check("government_retired_supply_nonnegative", sql`${t.retiredSupply} >= 0`),
+  check("government_archived_credits_nonnegative", sql`${t.archivedCredits} >= 0`),
+  check("government_archived_debits_nonnegative", sql`${t.archivedDebits} >= 0`),
+  check("government_archived_tax_nonnegative", sql`${t.archivedTaxCollected} >= 0`),
+  check("government_archived_tx_count_nonnegative", sql`${t.archivedTxCount} >= 0`),
 ]));
 
 // ---------------------------------------------------------------------------
@@ -461,11 +539,19 @@ export const users = pgTable("users", {
   // against `government.offline_total_allowance` at issue time (to compute a
   // new token's remaining allowance) and again, live, at every sync.
   offlineAllowanceUsed: integer("offline_allowance_used").notNull().default(0),
+
+  // --- V4: Cumulative accounting preservation across archived transactions ---
+  archivedCredits: integer("archived_credits").notNull().default(0),
+  archivedDebits: integer("archived_debits").notNull().default(0),
+  archivedTxCount: integer("archived_tx_count").notNull().default(0),
 }, (t) => ([
   uniqueIndex("users_registration_code_unique").on(t.registrationCodeId),
   check("users_username_lowercase", sql`${t.username} = lower(${t.username})`),
   check("users_balance_nonnegative", sql`${t.balance} >= 0`),
   check("users_offline_allowance_used_nonnegative", sql`${t.offlineAllowanceUsed} >= 0`),
+  check("users_archived_credits_nonnegative", sql`${t.archivedCredits} >= 0`),
+  check("users_archived_debits_nonnegative", sql`${t.archivedDebits} >= 0`),
+  check("users_archived_tx_count_nonnegative", sql`${t.archivedTxCount} >= 0`),
 ]));
 
 // ---------------------------------------------------------------------------
@@ -518,6 +604,14 @@ export const companies = pgTable("companies", {
 
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
   revokeReason: text("revoke_reason"),
+
+  // --- V4: Cumulative accounting & lifetime sales preservation --------------
+  archivedCredits: integer("archived_credits").notNull().default(0),
+  archivedDebits: integer("archived_debits").notNull().default(0),
+  archivedTxCount: integer("archived_tx_count").notNull().default(0),
+  /** Preserves net COMPANY_SALE + INVOICE_PAYMENT amounts from cleared rows
+   * so getCompanySalesFigure() never loses lifetime sales. */
+  archivedSalesNet: integer("archived_sales_net").notNull().default(0),
 }, (t) => ([
   check("companies_username_lowercase", sql`${t.username} = lower(${t.username})`),
   check("companies_balance_nonnegative", sql`${t.balance} >= 0`),
@@ -525,6 +619,10 @@ export const companies = pgTable("companies", {
     "companies_tax_rate_bounds",
     sql`${t.taxRateBp} IS NULL OR (${t.taxRateBp} >= 0 AND ${t.taxRateBp} <= 10000)`,
   ),
+  check("companies_archived_credits_nonnegative", sql`${t.archivedCredits} >= 0`),
+  check("companies_archived_debits_nonnegative", sql`${t.archivedDebits} >= 0`),
+  check("companies_archived_tx_count_nonnegative", sql`${t.archivedTxCount} >= 0`),
+  check("companies_archived_sales_net_nonnegative", sql`${t.archivedSalesNet} >= 0`),
   index("companies_owner_idx").on(t.ownerUserId),
   index("companies_status_idx").on(t.status),
 ]));
@@ -930,6 +1028,21 @@ export const retentionSettings = pgTable("retention_settings", {
    * ran). `lastCleanupAt` is the last attempt; this is the last clean one, so
    * a failing schedule is visible as a widening gap between the two. */
   lastCleanupSuccessAt: timestamp("last_cleanup_success_at", { withTimezone: true }),
+
+  // --- V4: Archive-before-clearing retention periods ------------------------
+  /** Eligible operational transaction history older than this many days may be
+   * archived into a verified ZIP and cleared while preserving balances and
+   * accounting checkpoints (spec §§8, 9, 10, 11). NULL = keep forever. */
+  transactionHistoryRetentionDays: integer("transaction_history_retention_days"),
+  /** Settled/rejected synthetic market orders older than this many days may be
+   * archived and cleared. NULL = keep forever. */
+  settledOrderHistoryRetentionDays: integer("settled_order_history_retention_days"),
+  /** Completed/rejected refund requests older than this many days may be
+   * archived and cleared. NULL = keep forever. */
+  closedRefundRetentionDays: integer("closed_refund_retention_days"),
+  /** Synthetic market candles older than this many days may be pruned or
+   * archived. Default 90 days keeps Neon storage bounded. */
+  marketCandleRetentionDays: integer("market_candle_retention_days").default(90),
 
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -1890,3 +2003,467 @@ export type MarketplaceContractApplication =
 export type PromotionCampaign = typeof promotionCampaigns.$inferSelect;
 export type MarketplaceOrderRating = typeof marketplaceOrderRatings.$inferSelect;
 export type ReconciliationStatus = typeof reconciliationStatus.$inferSelect;
+
+// ===========================================================================
+// V4 — AEROS EXCHANGE (Government-controlled INR package policy & acquisition)
+// ===========================================================================
+//
+// Exchange and Market remain strictly separate (spec §5):
+// - Package policies are versioned and audited.
+// - Synthetic market price movements NEVER alter package prices or contents.
+// - Each purchase freezes a complete snapshot of the package policy at request
+//   time.
+// - Until a verified payment gateway exists, purchases start in
+//   AWAITING_CONFIRMATION and require explicit Government manual/dev
+//   confirmation before crediting Aeros from the Treasury via transferInTx.
+// ===========================================================================
+
+export const exchangePackagePolicies = pgTable(
+  "exchange_package_policies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    policyCode: varchar("policy_code", { length: 32 }).notNull(),
+    version: integer("version").notNull().default(1),
+    title: varchar("title", { length: 120 }).notNull(),
+    description: text("description"),
+    /** Whole INR reference price for this package. */
+    inrPrice: integer("inr_price").notNull(),
+    /** Base virtual Aeros included in the package. */
+    aerosAmount: integer("aeros_amount").notNull(),
+    /** Optional promotional bonus Aeros included in the package. */
+    bonusAeros: integer("bonus_aeros").notNull().default(0),
+    /** Always equal to aerosAmount + bonusAeros. */
+    totalAeros: integer("total_aeros").notNull(),
+    active: boolean("active").notNull().default(true),
+    /** Explicit private virtual-economy disclosure shown before acquisition. */
+    disclosureText: text("disclosure_text").notNull(),
+    createdByGovId: uuid("created_by_gov_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    supersededAt: timestamp("superseded_at", { withTimezone: true }),
+  },
+  (t) => ([
+    check("exchange_policy_version_positive", sql`${t.version} >= 1`),
+    check("exchange_policy_inr_positive", sql`${t.inrPrice} >= 1`),
+    check("exchange_policy_aeros_positive", sql`${t.aerosAmount} >= 1`),
+    check("exchange_policy_bonus_nonnegative", sql`${t.bonusAeros} >= 0`),
+    check(
+      "exchange_policy_total_consistent",
+      sql`${t.totalAeros} = ${t.aerosAmount} + ${t.bonusAeros} AND ${t.totalAeros} >= 1`,
+    ),
+    uniqueIndex("exchange_policy_code_version_unique").on(t.policyCode, t.version),
+    index("exchange_policy_active_idx").on(t.active, t.policyCode),
+  ]),
+);
+
+export const exchangePurchases = pgTable(
+  "exchange_purchases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    purchaseNumber: varchar("purchase_number", { length: 24 }).notNull().unique(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    policyId: uuid("policy_id")
+      .notNull()
+      .references(() => exchangePackagePolicies.id),
+    /** Frozen snapshot of the exact policy version at purchase creation. */
+    policyCodeSnapshot: varchar("policy_code_snapshot", { length: 32 }).notNull(),
+    policyVersionSnapshot: integer("policy_version_snapshot").notNull(),
+    packageTitleSnapshot: varchar("package_title_snapshot", { length: 120 }).notNull(),
+    inrPriceSnapshot: integer("inr_price_snapshot").notNull(),
+    aerosAmountSnapshot: integer("aeros_amount_snapshot").notNull(),
+    bonusAerosSnapshot: integer("bonus_aeros_snapshot").notNull().default(0),
+    totalAerosSnapshot: integer("total_aeros_snapshot").notNull(),
+    disclosureSnapshot: text("disclosure_snapshot").notNull(),
+
+    /** Explicitly labelled safe manual/dev confirmation mode (never claims live INR gateway). */
+    paymentMode: varchar("payment_mode", { length: 40 })
+      .notNull()
+      .default("MANUAL_GOV_CONFIRMATION"),
+    /** Optional user-submitted receipt/reference note for Government verification. */
+    paymentReference: varchar("payment_reference", { length: 120 }),
+
+    status: exchangePurchaseStatusEnum("status")
+      .notNull()
+      .default("AWAITING_CONFIRMATION"),
+    creditedTxRef: varchar("credited_tx_ref", { length: 32 }),
+    reviewedByGovId: uuid("reviewed_by_gov_id"),
+    reviewNote: text("review_note"),
+    idempotencyKey: varchar("idempotency_key", { length: 80 }),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    creditedAt: timestamp("credited_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    refundedAt: timestamp("refunded_at", { withTimezone: true }),
+  },
+  (t) => ([
+    check("exchange_purchase_inr_positive", sql`${t.inrPriceSnapshot} >= 1`),
+    check("exchange_purchase_total_positive", sql`${t.totalAerosSnapshot} >= 1`),
+    check(
+      "exchange_purchase_credited_tx_consistent",
+      sql`(${t.status} NOT IN ('CREDITED', 'REFUNDED')) OR (${t.creditedTxRef} IS NOT NULL)`,
+    ),
+    index("exchange_purchases_user_idx").on(t.userId, t.createdAt),
+    index("exchange_purchases_status_idx").on(t.status, t.createdAt),
+    uniqueIndex("exchange_purchases_idempotency_unique")
+      .on(t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} IS NOT NULL`),
+  ]),
+);
+
+// ===========================================================================
+// V4 — AEROS MARKET (Internal Synthetic Market & Private Economy Trading)
+// ===========================================================================
+//
+// Deterministic, server-side synthetic index (spec §§6, 7):
+// - Whole-number Aeros prices only (`currentPrice >= minPrice <= maxPrice`).
+// - Modest bounded response to genuine aggregate BUY/SELL order flow.
+// - Chart refreshes are strictly read-only and never advance or mutate state.
+// - Every trade settles atomically against the Government Treasury via
+//   `transferInTx`, preserving `SUPPLY_INVARIANT` at all times.
+// ===========================================================================
+
+export const marketState = pgTable(
+  "market_state",
+  {
+    id: integer("id").primaryKey().default(1),
+    methodologyVersion: varchar("methodology_version", { length: 32 })
+      .notNull()
+      .default("V4-SYNTH-1.0"),
+    currentPrice: integer("current_price").notNull().default(100),
+    previousPrice: integer("previous_price").notNull().default(100),
+    open24hPrice: integer("open_24h_price").notNull().default(100),
+    high24hPrice: integer("high_24h_price").notNull().default(100),
+    low24hPrice: integer("low_24h_price").notNull().default(100),
+    minPrice: integer("min_price").notNull().default(10),
+    maxPrice: integer("max_price").notNull().default(10000),
+    /** Base natural volatility in basis points per 5-minute bucket (150 = 1.50%). */
+    baseVolatilityBp: integer("base_volatility_bp").notNull().default(150),
+    /** Order-flow pressure sensitivity in basis points (50 = 0.50%). */
+    demandSensitivityBp: integer("demand_sensitivity_bp").notNull().default(50),
+    /** Hard cap on single-bucket price movement in basis points (500 = 5.00%). */
+    maxStepChangeBp: integer("max_step_change_bp").notNull().default(500),
+    /** Maximum index units allowed in a single BUY or SELL order. */
+    maxOrderUnits: integer("max_order_units").notNull().default(500),
+    /** Minimum seconds between orders from the same user (anti-manipulation). */
+    userCooldownSeconds: integer("user_cooldown_seconds").notNull().default(10),
+    /** Accumulated net (buyUnits - sellUnits) in the current 5-minute bucket. */
+    netOrderFlowUnits: integer("net_order_flow_units").notNull().default(0),
+    /** Distinct user count contributing to order flow in the current bucket. */
+    activeBucketTraders: integer("active_bucket_traders").notNull().default(0),
+    /** 5-minute aligned timestamp of the latest materialized bucket. */
+    activeBucket5m: timestamp("active_bucket_5m", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    seedKey: varchar("seed_key", { length: 64 })
+      .notNull()
+      .default("aeros-v4-synth-market-v1"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    check("market_state_singleton", sql`${t.id} = 1`),
+    check("market_state_min_positive", sql`${t.minPrice} >= 1`),
+    check("market_state_bounds_valid", sql`${t.maxPrice} > ${t.minPrice}`),
+    check(
+      "market_state_price_within_bounds",
+      sql`${t.currentPrice} >= ${t.minPrice} AND ${t.currentPrice} <= ${t.maxPrice}`,
+    ),
+    check(
+      "market_state_volatility_bounds",
+      sql`${t.baseVolatilityBp} >= 10 AND ${t.baseVolatilityBp} <= 2500`,
+    ),
+    check(
+      "market_state_demand_bounds",
+      sql`${t.demandSensitivityBp} >= 0 AND ${t.demandSensitivityBp} <= 1000`,
+    ),
+    check(
+      "market_state_step_cap_bounds",
+      sql`${t.maxStepChangeBp} >= 25 AND ${t.maxStepChangeBp} <= 3000`,
+    ),
+    check("market_state_max_order_positive", sql`${t.maxOrderUnits} >= 1`),
+    check("market_state_cooldown_nonnegative", sql`${t.userCooldownSeconds} >= 0`),
+  ]),
+);
+
+export const marketCandles = pgTable(
+  "market_candles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** '5m', '15m', or '1h' (15m is the default chart timeframe per spec §6). */
+    timeframe: varchar("timeframe", { length: 8 }).notNull(),
+    bucketStart: timestamp("bucket_start", { withTimezone: true }).notNull(),
+    openPrice: integer("open_price").notNull(),
+    highPrice: integer("high_price").notNull(),
+    lowPrice: integer("low_price").notNull(),
+    closePrice: integer("close_price").notNull(),
+    /** Real executed unit volume only — never fabricated (spec §6). */
+    volumeUnits: integer("volume_units").notNull().default(0),
+    /** Real executed Aeros volume only — never fabricated. */
+    volumeAeros: integer("volume_aeros").notNull().default(0),
+    tradeCount: integer("trade_count").notNull().default(0),
+    buyUnits: integer("buy_units").notNull().default(0),
+    sellUnits: integer("sell_units").notNull().default(0),
+    isHighVolatility: boolean("is_high_volatility").notNull().default(false),
+    methodologyVersion: varchar("methodology_version", { length: 32 })
+      .notNull()
+      .default("V4-SYNTH-1.0"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    check("market_candles_timeframe_valid", sql`${t.timeframe} IN ('5m', '15m', '1h')`),
+    check("market_candles_prices_positive", sql`${t.openPrice} >= 1 AND ${t.lowPrice} >= 1 AND ${t.closePrice} >= 1`),
+    check(
+      "market_candles_ohlc_consistent",
+      sql`${t.highPrice} >= ${t.openPrice} AND ${t.highPrice} >= ${t.closePrice} AND ${t.highPrice} >= ${t.lowPrice} AND ${t.lowPrice} <= ${t.openPrice} AND ${t.lowPrice} <= ${t.closePrice}`,
+    ),
+    check(
+      "market_candles_volume_nonnegative",
+      sql`${t.volumeUnits} >= 0 AND ${t.volumeAeros} >= 0 AND ${t.tradeCount} >= 0 AND ${t.buyUnits} >= 0 AND ${t.sellUnits} >= 0`,
+    ),
+    uniqueIndex("market_candles_tf_bucket_unique").on(t.timeframe, t.bucketStart),
+    index("market_candles_tf_bucket_idx").on(t.timeframe, t.bucketStart),
+  ]),
+);
+
+export const marketPositions = pgTable(
+  "market_positions",
+  {
+    userId: uuid("user_id")
+      .primaryKey()
+      .references(() => users.id),
+    /** Whole synthetic index units currently held by this user. */
+    unitsHeld: integer("units_held").notNull().default(0),
+    /** Total Aeros cost basis of currently held units. */
+    totalCostBasis: integer("total_cost_basis").notNull().default(0),
+    /** Cumulative realized P/L in whole Aeros across closed/sold units. */
+    realizedPnl: integer("realized_pnl").notNull().default(0),
+    totalBoughtUnits: integer("total_bought_units").notNull().default(0),
+    totalSoldUnits: integer("total_sold_units").notNull().default(0),
+    lastTradeAt: timestamp("last_trade_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    check("market_positions_units_nonnegative", sql`${t.unitsHeld} >= 0`),
+    check("market_positions_cost_nonnegative", sql`${t.totalCostBasis} >= 0`),
+    check(
+      "market_positions_zero_units_zero_cost",
+      sql`(${t.unitsHeld} > 0) OR (${t.totalCostBasis} = 0)`,
+    ),
+  ]),
+);
+
+export const marketOrders = pgTable(
+  "market_orders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderNumber: varchar("order_number", { length: 24 }).notNull().unique(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    side: marketOrderSideEnum("side").notNull(),
+    quantity: integer("quantity").notNull(),
+    /** Client-observed price submitted for staleness/slippage validation only;
+     * NEVER trusted as the execution price (spec §7). */
+    expectedPrice: integer("expected_price").notNull(),
+    maxSlippageBp: integer("max_slippage_bp").notNull().default(200),
+    /** Server-computed authoritative execution price in whole Aeros. */
+    executionPrice: integer("execution_price").notNull(),
+    /** Always equal to quantity * executionPrice. */
+    totalAeros: integer("total_aeros").notNull(),
+    /** Change in cost basis (+totalAeros on BUY, -removedCostBasis on SELL). */
+    costBasisDelta: integer("cost_basis_delta").notNull().default(0),
+    /** Realized P/L on SELL orders (totalAeros - removedCostBasis). */
+    realizedPnlDelta: integer("realized_pnl_delta").notNull().default(0),
+    status: marketOrderStatusEnum("status").notNull().default("EXECUTED"),
+    rejectionReason: text("rejection_reason"),
+    /** Authoritative ledger reference in `transactions.tx_ref`. */
+    txRef: varchar("tx_ref", { length: 32 }),
+    idempotencyKey: varchar("idempotency_key", { length: 80 }),
+    methodologyVersion: varchar("methodology_version", { length: 32 })
+      .notNull()
+      .default("V4-SYNTH-1.0"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    check("market_orders_quantity_positive", sql`${t.quantity} >= 1`),
+    check("market_orders_expected_positive", sql`${t.expectedPrice} >= 1`),
+    check("market_orders_exec_positive", sql`${t.executionPrice} >= 1`),
+    check(
+      "market_orders_total_consistent",
+      sql`${t.totalAeros} = ${t.quantity} * ${t.executionPrice} AND ${t.totalAeros} >= 1`,
+    ),
+    check(
+      "market_orders_executed_has_tx",
+      sql`(${t.status} <> 'EXECUTED') OR (${t.txRef} IS NOT NULL)`,
+    ),
+    index("market_orders_user_idx").on(t.userId, t.createdAt),
+    index("market_orders_created_idx").on(t.createdAt),
+    uniqueIndex("market_orders_idempotency_unique")
+      .on(t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} IS NOT NULL`),
+  ]),
+);
+
+// ===========================================================================
+// V4 — REFUND CENTER (User Refund Requests & Government Decisions)
+// ===========================================================================
+
+export const refundRequests = pgTable(
+  "refund_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    refundNumber: varchar("refund_number", { length: 24 }).notNull().unique(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    refundType: refundTypeEnum("refund_type")
+      .notNull()
+      .default("VIRTUAL_AEROS_REFUND"),
+    /** Optional ledger transaction reference the user is asking to refund. */
+    sourceTxRef: varchar("source_tx_ref", { length: 32 }),
+    /** Optional linked Exchange package purchase. */
+    exchangePurchaseId: uuid("exchange_purchase_id").references(
+      () => exchangePurchases.id,
+    ),
+    requestedAerosAmount: integer("requested_aeros_amount").notNull(),
+    approvedAerosAmount: integer("approved_aeros_amount"),
+    /** Informational INR snapshot for Exchange package refund requests. */
+    inrReferenceAmount: integer("inr_reference_amount"),
+    reason: text("reason").notNull(),
+    userNotes: text("user_notes"),
+    status: refundStatusEnum("status").notNull().default("PENDING"),
+    governmentDecisionNote: text("government_decision_note"),
+    delayReason: text("delay_reason"),
+    expectedResolutionAt: timestamp("expected_resolution_at", { withTimezone: true }),
+    /** Populated when a virtual Aeros settlement transfer is executed. */
+    settlementTxRef: varchar("settlement_tx_ref", { length: 32 }),
+    reviewedByGovId: uuid("reviewed_by_gov_id"),
+    idempotencyKey: varchar("idempotency_key", { length: 80 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+  },
+  (t) => ([
+    check("refund_requested_positive", sql`${t.requestedAerosAmount} >= 1`),
+    check(
+      "refund_approved_nonnegative",
+      sql`${t.approvedAerosAmount} IS NULL OR ${t.approvedAerosAmount} >= 0`,
+    ),
+    index("refund_requests_user_idx").on(t.userId, t.createdAt),
+    index("refund_requests_status_idx").on(t.status, t.createdAt),
+    uniqueIndex("refund_requests_idempotency_unique")
+      .on(t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} IS NOT NULL`),
+  ]),
+);
+
+// ===========================================================================
+// V4 — ARCHIVE CENTER & IMMUTABLE ACCOUNTING CHECKPOINTS (Spec §§8, 9, 10, 11)
+// ===========================================================================
+//
+// Enforces Archive-Before-Clearing and Core Accounting Preservation:
+// 1. `archive_batches` stores the verified archive metadata, manifest, SHA-256
+//    checksum, exact record IDs covered, and the downloadable ZIP payload so
+//    serverless deployments can always download and re-verify an archive before
+//    clearing eligible historical rows.
+// 2. `accounting_checkpoints` stores immutable period accounting summaries
+//    whenever eligible historical `transactions` rows are cleared, preserving
+//    opening/closing balances, cumulative credits/debits, tax totals, and
+//    company lifetime sales figures forever.
+// ===========================================================================
+
+export const archiveBatches = pgTable(
+  "archive_batches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    batchNumber: varchar("batch_number", { length: 24 }).notNull().unique(),
+    /** 'transactions_history' | 'settled_market_orders' | 'closed_refunds' | 'old_market_candles' */
+    datasetKey: varchar("dataset_key", { length: 48 }).notNull(),
+    archiveVersion: varchar("archive_version", { length: 16 }).notNull().default("V4.0"),
+    schemaVersion: varchar("schema_version", { length: 16 }).notNull().default("0008"),
+    cutoffDate: timestamp("cutoff_date", { withTimezone: true }).notNull(),
+    periodStart: timestamp("period_start", { withTimezone: true }),
+    periodEnd: timestamp("period_end", { withTimezone: true }),
+    recordCount: integer("record_count").notNull(),
+    /** SHA-256 hex digest of the generated ZIP archive bytes. */
+    sha256Checksum: varchar("sha256_checksum", { length: 64 }).notNull(),
+    /** Short verification token derived from the manifest & checksum. */
+    verificationToken: varchar("verification_token", { length: 32 }).notNull(),
+    /** Full structured manifest (files, counts, checksums, accounting snapshot). */
+    manifestJson: jsonb("manifest_json").notNull(),
+    /** Exact list of record primary keys included in this archive batch. */
+    recordIdsJson: jsonb("record_ids_json").notNull(),
+    /** Base64-encoded `.zip` binary so any serverless instance can stream or
+     * re-verify the exact archive before destructive clearing. */
+    zipPayloadBase64: text("zip_payload_base64").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    status: archiveBatchStatusEnum("status").notNull().default("CREATED"),
+    createdByGovId: uuid("created_by_gov_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    downloadedAt: timestamp("downloaded_at", { withTimezone: true }),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    clearedAt: timestamp("cleared_at", { withTimezone: true }),
+    clearedRecordCount: integer("cleared_record_count"),
+  },
+  (t) => ([
+    check("archive_batch_record_count_nonnegative", sql`${t.recordCount} >= 0`),
+    check("archive_batch_byte_size_positive", sql`${t.byteSize} >= 1`),
+    index("archive_batches_dataset_idx").on(t.datasetKey, t.createdAt),
+    index("archive_batches_status_idx").on(t.status, t.createdAt),
+  ]),
+);
+
+export const accountingCheckpoints = pgTable(
+  "accounting_checkpoints",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    checkpointNumber: varchar("checkpoint_number", { length: 24 }).notNull().unique(),
+    archiveBatchId: uuid("archive_batch_id")
+      .notNull()
+      .unique()
+      .references(() => archiveBatches.id),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    clearedTxCount: integer("cleared_tx_count").notNull(),
+    grossVolumeCleared: integer("gross_volume_cleared").notNull(),
+    taxVolumeCleared: integer("tax_volume_cleared").notNull(),
+    netVolumeCleared: integer("net_volume_cleared").notNull(),
+    /** Authoritative supply & balance snapshot verified immediately before and
+     * after clearing the historical rows. */
+    totalSupplySnapshot: integer("total_supply_snapshot").notNull(),
+    retiredSupplySnapshot: integer("retired_supply_snapshot").notNull().default(0),
+    treasuryBalanceSnapshot: integer("treasury_balance_snapshot").notNull(),
+    userHeldBalanceSnapshot: integer("user_held_balance_snapshot").notNull(),
+    companyHeldBalanceSnapshot: integer("company_held_balance_snapshot").notNull(),
+    /** Per-wallet credit/debit/sales delta summary preserved in JSONB. */
+    walletRollupsJson: jsonb("wallet_rollups_json").notNull(),
+    /** SHA-256 integrity hash over the checkpoint fields and archive checksum. */
+    checkpointHash: varchar("checkpoint_hash", { length: 64 }).notNull(),
+    createdByGovId: uuid("created_by_gov_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    check("accounting_checkpoint_tx_count_positive", sql`${t.clearedTxCount} >= 1`),
+    check("accounting_checkpoint_gross_nonnegative", sql`${t.grossVolumeCleared} >= 0`),
+    check("accounting_checkpoint_tax_nonnegative", sql`${t.taxVolumeCleared} >= 0`),
+    check("accounting_checkpoint_net_nonnegative", sql`${t.netVolumeCleared} >= 0`),
+    check(
+      "accounting_checkpoint_supply_balanced",
+      sql`${t.treasuryBalanceSnapshot} + ${t.userHeldBalanceSnapshot} + ${t.companyHeldBalanceSnapshot} + ${t.retiredSupplySnapshot} = ${t.totalSupplySnapshot}`,
+    ),
+    index("accounting_checkpoints_created_idx").on(t.createdAt),
+  ]),
+);
+
+// --- V4 ---------------------------------------------------------------------
+export type ExchangePackagePolicy = typeof exchangePackagePolicies.$inferSelect;
+export type ExchangePurchase = typeof exchangePurchases.$inferSelect;
+export type MarketState = typeof marketState.$inferSelect;
+export type MarketCandle = typeof marketCandles.$inferSelect;
+export type MarketPosition = typeof marketPositions.$inferSelect;
+export type MarketOrder = typeof marketOrders.$inferSelect;
+export type RefundRequest = typeof refundRequests.$inferSelect;
+export type ArchiveBatch = typeof archiveBatches.$inferSelect;
+export type AccountingCheckpoint = typeof accountingCheckpoints.$inferSelect;
+

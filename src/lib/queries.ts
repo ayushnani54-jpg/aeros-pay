@@ -286,7 +286,10 @@ export async function getEconomicOverview() {
     .select({ total: sql<number>`coalesce(sum(${users.balance}),0)::int` })
     .from(users);
   const [companyHeld] = await db
-    .select({ total: sql<number>`coalesce(sum(${companies.balance}),0)::int` })
+    .select({
+      total: sql<number>`coalesce(sum(${companies.balance}),0)::int`,
+      archivedSales: sql<number>`coalesce(sum(${companies.archivedSalesNet}),0)::int`,
+    })
     .from(companies);
 
   const [taxCollected] = await db
@@ -327,21 +330,25 @@ export async function getEconomicOverview() {
 
   const userHeldTotal = userHeld?.total ?? 0;
   const companyHeldTotal = companyHeld?.total ?? 0;
+  const retiredSupply = gov.retiredSupply ?? 0;
+  const accounted = gov.balance + userHeldTotal + companyHeldTotal + retiredSupply;
 
   return {
     treasury: gov.balance,
     totalSupply: gov.totalSupply,
+    retiredSupply,
     userHeld: userHeldTotal,
     companyHeld: companyHeldTotal,
     circulating: userHeldTotal + companyHeldTotal,
-    accounted: gov.balance + userHeldTotal + companyHeldTotal,
-    balanced: gov.balance + userHeldTotal + companyHeldTotal === gov.totalSupply,
-    taxCollected: taxCollected?.total ?? 0,
+    accounted,
+    balanced: accounted === gov.totalSupply,
+    taxCollected: (taxCollected?.total ?? 0) + (gov.archivedTaxCollected ?? 0),
     totalIssued: issued?.total ?? 0,
-    governmentSpending: govSpending?.total ?? 0,
-    companySalesVolume: companySales?.total ?? 0,
+    governmentSpending: (govSpending?.total ?? 0) + (gov.archivedDebits ?? 0),
+    companySalesVolume: (companySales?.total ?? 0) + (companyHeld?.archivedSales ?? 0),
     userPaymentVolume: userVolume?.total ?? 0,
     transactionCount: txCount?.c ?? 0,
+    archivedTxCount: gov.archivedTxCount ?? 0,
     taxRateBp: gov.taxRateBp,
     companyTaxRateBp: gov.companyTaxRateBp,
   };
@@ -622,7 +629,7 @@ export async function getCompanyAdminProfile(companyId: string) {
     offers,
     listings,
     governmentActions: govActions,
-    salesTotal: sales?.total ?? 0,
+    salesTotal: (sales?.total ?? 0) + (row.company.archivedSalesNet ?? 0),
     taxPaid: taxPaid?.total ?? 0,
   };
 }
@@ -640,16 +647,26 @@ export async function getPendingCompanyCount(): Promise<number> {
 // ---------------------------------------------------------------------------
 
 export async function getCompanyDashboardStats(companyId: string) {
-  const [sales] = await db
-    .select({ total: sql<number>`coalesce(sum(${transactions.netAmount}),0)::int` })
-    .from(transactions)
-    .where(
-      and(
-        eq(transactions.receiverType, "COMPANY"),
-        eq(transactions.receiverId, companyId),
-        inArray(transactions.type, ["COMPANY_SALE", "INVOICE_PAYMENT"]),
+  const [[companyRow], [sales]] = await Promise.all([
+    db
+      .select({
+        archivedSalesNet: companies.archivedSalesNet,
+        archivedTxCount: companies.archivedTxCount,
+      })
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .limit(1),
+    db
+      .select({ total: sql<number>`coalesce(sum(${transactions.netAmount}),0)::int` })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.receiverType, "COMPANY"),
+          eq(transactions.receiverId, companyId),
+          inArray(transactions.type, ["COMPANY_SALE", "INVOICE_PAYMENT"]),
+        ),
       ),
-    );
+  ]);
 
   const [incoming] = await db
     .select({ c: sql<number>`count(*)::int` })
@@ -678,7 +695,7 @@ export async function getCompanyDashboardStats(companyId: string) {
     .from(invoices)
     .where(and(eq(invoices.companyId, companyId), eq(invoices.status, "PENDING")));
 
-  const salesTotal = sales?.total ?? 0;
+  const salesTotal = (sales?.total ?? 0) + (companyRow?.archivedSalesNet ?? 0);
   const tax = taxPaid?.total ?? 0;
 
   return {
@@ -798,3 +815,29 @@ export async function getOutstandingInstalmentsForOwner(ownerUserId: string) {
     )
     .orderBy(loanInstalments.dueAt);
 }
+
+export async function getGovernmentFeatureFlags() {
+  const [gov] = await db
+    .select({
+      exchangeEnabled: government.exchangeEnabled,
+      exchangeLivePaymentsEnabled: government.exchangeLivePaymentsEnabled,
+      marketEnabled: government.marketEnabled,
+      tradingEnabled: government.tradingEnabled,
+      refundCenterEnabled: government.refundCenterEnabled,
+      retentionEnabled: government.retentionEnabled,
+      archiveCenterEnabled: government.archiveCenterEnabled,
+    })
+    .from(government)
+    .limit(1);
+
+  return {
+    exchangeEnabled: gov?.exchangeEnabled ?? true,
+    exchangeLivePaymentsEnabled: gov?.exchangeLivePaymentsEnabled ?? false,
+    marketEnabled: gov?.marketEnabled ?? true,
+    tradingEnabled: gov?.tradingEnabled ?? true,
+    refundCenterEnabled: gov?.refundCenterEnabled ?? true,
+    retentionEnabled: gov?.retentionEnabled ?? true,
+    archiveCenterEnabled: gov?.archiveCenterEnabled ?? true,
+  };
+}
+

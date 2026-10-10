@@ -169,7 +169,12 @@ async function readCleanableCounts(): Promise<CleanableCount[]> {
          JOIN marketplace_contracts c ON c.id = a.contract_id
          WHERE c.status IN ('EXPIRED', 'CANCELLED'))                                AS closed_applications,
       (SELECT count(*) FROM promotion_campaigns
-         WHERE status IN ('REJECTED', 'CANCELLED') AND total_charged = 0)           AS dead_campaigns
+         WHERE status IN ('REJECTED', 'CANCELLED') AND total_charged = 0)           AS dead_campaigns,
+      (SELECT count(*) FROM market_candles)                                         AS market_candles,
+      (SELECT count(*) FROM market_orders)                                          AS market_orders,
+      (SELECT count(*) FROM refund_requests
+         WHERE status IN ('COMPLETED', 'REJECTED'))                                 AS closed_refunds,
+      (SELECT count(*) FROM archive_batches)                                        AS archive_batches
   `);
   const row = (result as unknown as Rows<Record<string, unknown>>).rows[0] ?? {};
   const n = (k: string) => Number(row[k] ?? 0);
@@ -240,6 +245,30 @@ async function readCleanableCounts(): Promise<CleanableCount[]> {
       label: "Rejected / cancelled promotions never charged",
       rows: n("dead_campaigns"),
       disposition: "Deleted after the configured period. A charged campaign is kept.",
+    },
+    {
+      key: "market_candles",
+      label: "Synthetic market OHLC candles (5m / 15m / 1h)",
+      rows: n("market_candles"),
+      disposition: "Archivable and clearable past the 48h live chart window via Archive Center.",
+    },
+    {
+      key: "market_orders",
+      label: "Executed synthetic market orders",
+      rows: n("market_orders"),
+      disposition: "Archivable and clearable after verified .zip download in Archive Center.",
+    },
+    {
+      key: "closed_refunds",
+      label: "Completed / rejected refund requests",
+      rows: n("closed_refunds"),
+      disposition: "Archivable and clearable after verified .zip download in Archive Center.",
+    },
+    {
+      key: "archive_batches",
+      label: "Generated .zip archive batches",
+      rows: n("archive_batches"),
+      disposition: "Retains manifest, SHA-256 checksum, and downloadable ZIP payload.",
     },
   ];
 }

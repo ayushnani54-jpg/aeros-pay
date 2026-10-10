@@ -28,6 +28,9 @@ const PRIMARY: NavItem[] = [
 ];
 
 const SECONDARY: NavItem[] = [
+  { href: "/exchange", label: "Exchange", icon: "send" },
+  { href: "/aeros-market", label: "Aeros Market", icon: "list" },
+  { href: "/refunds", label: "Refunds", icon: "updates" },
   { href: "/market/orders", label: "My Orders", icon: "list" },
   { href: "/market/leaderboard", label: "Leaderboard", icon: "list" },
   { href: "/market/wanted", label: "Wanted", icon: "updates" },

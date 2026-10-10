@@ -71,17 +71,24 @@ export async function getCompanySalesFigure(
   companyId: string,
   executor: Pick<typeof db, "select"> = db,
 ): Promise<number> {
-  const [row] = await executor
-    .select({ total: sql<number>`coalesce(sum(${transactions.netAmount}), 0)::int` })
-    .from(transactions)
-    .where(
-      and(
-        eq(transactions.receiverType, "COMPANY"),
-        eq(transactions.receiverId, companyId),
-        inArray(transactions.type, [...SALES_TX_TYPES]),
+  const [[row], [comp]] = await Promise.all([
+    executor
+      .select({ total: sql<number>`coalesce(sum(${transactions.netAmount}), 0)::int` })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.receiverType, "COMPANY"),
+          eq(transactions.receiverId, companyId),
+          inArray(transactions.type, [...SALES_TX_TYPES]),
+        ),
       ),
-    );
-  return row?.total ?? 0;
+    executor
+      .select({ archivedSalesNet: companies.archivedSalesNet })
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .limit(1),
+  ]);
+  return (row?.total ?? 0) + (comp?.archivedSalesNet ?? 0);
 }
 
 export function computeValuation(salesFigure: number, multiplierBp: number): number {

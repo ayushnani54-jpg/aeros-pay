@@ -11,6 +11,10 @@ import { govLogoutAction } from "@/actions/auth";
  */
 const NAV_ITEMS = [
   { href: "/gov", label: "Dashboard" },
+  { href: "/gov/exchange", label: "Exchange" },
+  { href: "/gov/market", label: "Market Index" },
+  { href: "/gov/refunds", label: "Refunds" },
+  { href: "/gov/archive", label: "Archive Center" },
   { href: "/gov/users", label: "Users" },
   { href: "/gov/companies", label: "Companies" },
   { href: "/gov/transactions", label: "Transactions" },

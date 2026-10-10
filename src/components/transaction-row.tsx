@@ -26,6 +26,17 @@ const TYPE_LABELS: Record<string, string> = {
   COMPANY_SALE_PURCHASE: "Company purchase",
   LOAN_DISBURSEMENT: "Loan disbursement",
   LOAN_REPAYMENT: "Loan repayment",
+  MARKETPLACE_PAYMENT: "Marketplace payment",
+  CONTRACT_PAYMENT: "Contract payment",
+  PROMOTION_CHARGE: "Promotion charge",
+  GOVERNMENT_ON_BEHALF: "Government on-behalf payment",
+  TRANSACTION_REVERSAL: "Transaction reversal",
+  TRANSACTION_ADJUSTMENT: "Transaction adjustment",
+  EXCHANGE_PURCHASE: "Aeros Exchange acquisition",
+  MARKET_TRADE_BUY: "Aeros Market buy",
+  MARKET_TRADE_SELL: "Aeros Market sell",
+  REFUND_CREDIT: "Approved refund credit",
+  REFUND_DEBIT: "Approved refund debit",
 };
 
 export function TransactionRow({

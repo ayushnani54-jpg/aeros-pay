@@ -10,7 +10,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "seed:government": "tsx scripts/seed-government.ts"
+    "seed:government": "tsx scripts/seed-government.ts",
+    "test:v4": "tsx --conditions react-server scripts/test-v4.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

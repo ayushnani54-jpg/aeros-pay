@@ -56,7 +56,7 @@ export default async function GovIssuanceDetailPage({
             <ExecuteIssuanceButton requestId={request.id} disabled={!canExecute} />
             {!canExecute && (
               <p className="mt-2 text-xs text-muted">
-                Execution requires 100% approval from every eligible user.
+                Execution requires a simple majority of eligible voters ({progress.requiredToPass} of {progress.eligibleCount} approvals).
               </p>
             )}
           </div>

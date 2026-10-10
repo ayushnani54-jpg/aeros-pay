@@ -1,15 +1,19 @@
 import "server-only";
 import { db } from "@/db/client";
 import {
+  accountingCheckpoints,
   auditLogs,
   companies,
   companySaleRecords,
+  exchangePurchases,
   invoices,
   issuanceRequests,
   loanPayments,
   loans,
+  marketOrders,
   marketplaceOffers,
   marketplaceOrders,
+  refundRequests,
   supportMessages,
   supportThreads,
   transactions,
@@ -1170,6 +1174,271 @@ const DATASETS: ExportDataset[] = [
         .leftJoin(users, eq(users.id, supportThreads.userId))
         .where(allOf(conditions))
         .orderBy(asc(supportMessages.createdAt), asc(supportMessages.id))
+        .limit(limit);
+      return { rows, next: cursorFrom(rows) };
+    },
+  },
+  {
+    key: "exchange-purchases",
+    label: "Aeros Exchange purchases",
+    description:
+      "Exchange package acquisition requests, frozen policy snapshots, payment mode and credit references.",
+    scopes: ["GOVERNMENT", "USER"],
+    columns: [
+      "purchaseNumber",
+      "userId",
+      "policyCodeSnapshot",
+      "policyVersionSnapshot",
+      "packageTitleSnapshot",
+      "inrPriceSnapshot",
+      "aerosAmountSnapshot",
+      "bonusAerosSnapshot",
+      "totalAerosSnapshot",
+      "paymentMode",
+      "paymentReference",
+      "status",
+      "creditedTxRef",
+      "reviewNote",
+      "createdAt",
+      "creditedAt",
+      "cancelledAt",
+      "refundedAt",
+    ],
+    supports: ["from", "to", "status", "minAmount", "maxAmount", "user"],
+    async fetchPage(scope, f, cursor, limit) {
+      const conditions: (SQL | undefined)[] = [];
+      if (scope.kind === "USER") {
+        conditions.push(eq(exchangePurchases.userId, scope.userId));
+      } else if (f.user) {
+        const named = await resolveNamedParties(f);
+        if (named.userId) conditions.push(eq(exchangePurchases.userId, named.userId));
+      }
+      conditions.push(
+        f.status ? sql`${exchangePurchases.status}::text = ${f.status}` : undefined,
+        ...dateRange(exchangePurchases.createdAt as never, f),
+        ...amountRange(exchangePurchases.totalAerosSnapshot as never, f),
+        afterCursor(exchangePurchases.createdAt as never, exchangePurchases.id as never, cursor),
+      );
+      const rows = await db
+        .select({
+          purchaseNumber: exchangePurchases.purchaseNumber,
+          userId: exchangePurchases.userId,
+          policyCodeSnapshot: exchangePurchases.policyCodeSnapshot,
+          policyVersionSnapshot: exchangePurchases.policyVersionSnapshot,
+          packageTitleSnapshot: exchangePurchases.packageTitleSnapshot,
+          inrPriceSnapshot: exchangePurchases.inrPriceSnapshot,
+          aerosAmountSnapshot: exchangePurchases.aerosAmountSnapshot,
+          bonusAerosSnapshot: exchangePurchases.bonusAerosSnapshot,
+          totalAerosSnapshot: exchangePurchases.totalAerosSnapshot,
+          paymentMode: exchangePurchases.paymentMode,
+          paymentReference: exchangePurchases.paymentReference,
+          status: exchangePurchases.status,
+          creditedTxRef: exchangePurchases.creditedTxRef,
+          reviewNote: exchangePurchases.reviewNote,
+          createdAt: exchangePurchases.createdAt,
+          creditedAt: exchangePurchases.creditedAt,
+          cancelledAt: exchangePurchases.cancelledAt,
+          refundedAt: exchangePurchases.refundedAt,
+          _at: cursorAtColumn(exchangePurchases.createdAt),
+          _id: exchangePurchases.id,
+        })
+        .from(exchangePurchases)
+        .where(allOf(conditions))
+        .orderBy(asc(exchangePurchases.createdAt), asc(exchangePurchases.id))
+        .limit(limit);
+      return { rows, next: cursorFrom(rows) };
+    },
+  },
+  {
+    key: "synthetic-market-orders",
+    label: "Synthetic market trades",
+    description:
+      "Executed BUY and SELL orders on the internal Aeros Market Index, with execution price and P/L.",
+    scopes: ["GOVERNMENT", "USER"],
+    columns: [
+      "orderNumber",
+      "userId",
+      "side",
+      "quantity",
+      "expectedPrice",
+      "executionPrice",
+      "totalAeros",
+      "costBasisDelta",
+      "realizedPnlDelta",
+      "status",
+      "txRef",
+      "methodologyVersion",
+      "createdAt",
+    ],
+    supports: ["from", "to", "type", "status", "minAmount", "maxAmount", "user"],
+    async fetchPage(scope, f, cursor, limit) {
+      const conditions: (SQL | undefined)[] = [];
+      if (scope.kind === "USER") {
+        conditions.push(eq(marketOrders.userId, scope.userId));
+      } else if (f.user) {
+        const named = await resolveNamedParties(f);
+        if (named.userId) conditions.push(eq(marketOrders.userId, named.userId));
+      }
+      conditions.push(
+        f.type ? sql`${marketOrders.side}::text = ${f.type}` : undefined,
+        f.status ? sql`${marketOrders.status}::text = ${f.status}` : undefined,
+        ...dateRange(marketOrders.createdAt as never, f),
+        ...amountRange(marketOrders.totalAeros as never, f),
+        afterCursor(marketOrders.createdAt as never, marketOrders.id as never, cursor),
+      );
+      const rows = await db
+        .select({
+          orderNumber: marketOrders.orderNumber,
+          userId: marketOrders.userId,
+          side: marketOrders.side,
+          quantity: marketOrders.quantity,
+          expectedPrice: marketOrders.expectedPrice,
+          executionPrice: marketOrders.executionPrice,
+          totalAeros: marketOrders.totalAeros,
+          costBasisDelta: marketOrders.costBasisDelta,
+          realizedPnlDelta: marketOrders.realizedPnlDelta,
+          status: marketOrders.status,
+          txRef: marketOrders.txRef,
+          methodologyVersion: marketOrders.methodologyVersion,
+          createdAt: marketOrders.createdAt,
+          _at: cursorAtColumn(marketOrders.createdAt),
+          _id: marketOrders.id,
+        })
+        .from(marketOrders)
+        .where(allOf(conditions))
+        .orderBy(asc(marketOrders.createdAt), asc(marketOrders.id))
+        .limit(limit);
+      return { rows, next: cursorFrom(rows) };
+    },
+  },
+  {
+    key: "refund-requests",
+    label: "Refund requests",
+    description:
+      "User refund requests, delay reasons, Government decisions and virtual Aeros settlement references.",
+    scopes: ["GOVERNMENT", "USER"],
+    columns: [
+      "refundNumber",
+      "userId",
+      "refundType",
+      "sourceTxRef",
+      "exchangePurchaseId",
+      "requestedAerosAmount",
+      "approvedAerosAmount",
+      "inrReferenceAmount",
+      "status",
+      "settlementTxRef",
+      "reason",
+      "userNotes",
+      "governmentDecisionNote",
+      "delayReason",
+      "expectedResolutionAt",
+      "createdAt",
+      "completedAt",
+      "rejectedAt",
+    ],
+    supports: ["from", "to", "type", "status", "minAmount", "maxAmount", "user"],
+    async fetchPage(scope, f, cursor, limit) {
+      const conditions: (SQL | undefined)[] = [];
+      if (scope.kind === "USER") {
+        conditions.push(eq(refundRequests.userId, scope.userId));
+      } else if (f.user) {
+        const named = await resolveNamedParties(f);
+        if (named.userId) conditions.push(eq(refundRequests.userId, named.userId));
+      }
+      conditions.push(
+        f.type ? sql`${refundRequests.refundType}::text = ${f.type}` : undefined,
+        f.status ? sql`${refundRequests.status}::text = ${f.status}` : undefined,
+        ...dateRange(refundRequests.createdAt as never, f),
+        ...amountRange(refundRequests.requestedAerosAmount as never, f),
+        afterCursor(refundRequests.createdAt as never, refundRequests.id as never, cursor),
+      );
+      const rows = await db
+        .select({
+          refundNumber: refundRequests.refundNumber,
+          userId: refundRequests.userId,
+          refundType: refundRequests.refundType,
+          sourceTxRef: refundRequests.sourceTxRef,
+          exchangePurchaseId: refundRequests.exchangePurchaseId,
+          requestedAerosAmount: refundRequests.requestedAerosAmount,
+          approvedAerosAmount: refundRequests.approvedAerosAmount,
+          inrReferenceAmount: refundRequests.inrReferenceAmount,
+          status: refundRequests.status,
+          settlementTxRef: refundRequests.settlementTxRef,
+          reason: refundRequests.reason,
+          userNotes: refundRequests.userNotes,
+          governmentDecisionNote: refundRequests.governmentDecisionNote,
+          delayReason: refundRequests.delayReason,
+          expectedResolutionAt: refundRequests.expectedResolutionAt,
+          createdAt: refundRequests.createdAt,
+          completedAt: refundRequests.completedAt,
+          rejectedAt: refundRequests.rejectedAt,
+          _at: cursorAtColumn(refundRequests.createdAt),
+          _id: refundRequests.id,
+        })
+        .from(refundRequests)
+        .where(allOf(conditions))
+        .orderBy(asc(refundRequests.createdAt), asc(refundRequests.id))
+        .limit(limit);
+      return { rows, next: cursorFrom(rows) };
+    },
+  },
+  {
+    key: "accounting-checkpoints",
+    label: "Accounting checkpoints",
+    description:
+      "Immutable period checkpoints preserving cumulative volumes and supply invariants across cleared archives.",
+    scopes: GOVERNMENT_ONLY,
+    columns: [
+      "checkpointNumber",
+      "archiveBatchId",
+      "periodStart",
+      "periodEnd",
+      "clearedTxCount",
+      "grossVolumeCleared",
+      "taxVolumeCleared",
+      "netVolumeCleared",
+      "totalSupplySnapshot",
+      "retiredSupplySnapshot",
+      "treasuryBalanceSnapshot",
+      "userHeldBalanceSnapshot",
+      "companyHeldBalanceSnapshot",
+      "checkpointHash",
+      "createdAt",
+    ],
+    supports: ["from", "to"],
+    async fetchPage(_scope, f, cursor, limit) {
+      const conditions = [
+        ...dateRange(accountingCheckpoints.createdAt as never, f),
+        afterCursor(
+          accountingCheckpoints.createdAt as never,
+          accountingCheckpoints.id as never,
+          cursor,
+        ),
+      ];
+      const rows = await db
+        .select({
+          checkpointNumber: accountingCheckpoints.checkpointNumber,
+          archiveBatchId: accountingCheckpoints.archiveBatchId,
+          periodStart: accountingCheckpoints.periodStart,
+          periodEnd: accountingCheckpoints.periodEnd,
+          clearedTxCount: accountingCheckpoints.clearedTxCount,
+          grossVolumeCleared: accountingCheckpoints.grossVolumeCleared,
+          taxVolumeCleared: accountingCheckpoints.taxVolumeCleared,
+          netVolumeCleared: accountingCheckpoints.netVolumeCleared,
+          totalSupplySnapshot: accountingCheckpoints.totalSupplySnapshot,
+          retiredSupplySnapshot: accountingCheckpoints.retiredSupplySnapshot,
+          treasuryBalanceSnapshot: accountingCheckpoints.treasuryBalanceSnapshot,
+          userHeldBalanceSnapshot: accountingCheckpoints.userHeldBalanceSnapshot,
+          companyHeldBalanceSnapshot: accountingCheckpoints.companyHeldBalanceSnapshot,
+          checkpointHash: accountingCheckpoints.checkpointHash,
+          createdAt: accountingCheckpoints.createdAt,
+          _at: cursorAtColumn(accountingCheckpoints.createdAt),
+          _id: accountingCheckpoints.id,
+        })
+        .from(accountingCheckpoints)
+        .where(allOf(conditions))
+        .orderBy(asc(accountingCheckpoints.createdAt), asc(accountingCheckpoints.id))
         .limit(limit);
       return { rows, next: cursorFrom(rows) };
     },

@@ -221,3 +221,30 @@ export const COMPANY_QR_PIXEL_SIZE = 220;
  * reconciled. `localStorage` is exactly the right scope for it.
  */
 export const PAYMENT_SOUND_STORAGE_KEY = "aeros_payment_sound";
+
+// ---------------------------------------------------------------------------
+// V4 — Aeros Exchange, Synthetic Market, Refund Center & Archive Center
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_EXCHANGE_DISCLOSURE =
+  "Aeros is a private virtual-economy unit used solely inside Aeros Pay. It is not legal tender, not a cryptocurrency, and not guaranteed to be redeemable for INR.";
+
+export const DEFAULT_MARKET_DISCLOSURE =
+  "The Aeros Market Index (AMI) is an internally generated, deterministic synthetic index within the private Aeros Pay economy. It is not a real-world financial instrument, security, or cryptocurrency feed.";
+
+export const MARKET_METHODOLOGY_VERSION = "V4-SYNTH-1.0";
+export const MARKET_TIMEFRAMES = ["5m", "15m", "1h"] as const;
+export type MarketTimeframe = (typeof MARKET_TIMEFRAMES)[number];
+export const DEFAULT_MARKET_TIMEFRAME: MarketTimeframe = "15m";
+
+/** Explicit confirmation phrase required before clearing verified archives. */
+export const ARCHIVE_CLEAR_CONFIRM_PHRASE = "CONFIRM ARCHIVE CLEAR";
+
+export const ARCHIVE_DATASET_KEYS = [
+  "transactions_history",
+  "settled_market_orders",
+  "closed_refunds",
+  "old_market_candles",
+] as const;
+export type ArchiveDatasetKey = (typeof ARCHIVE_DATASET_KEYS)[number];
+

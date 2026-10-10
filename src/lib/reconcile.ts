@@ -100,17 +100,19 @@ async function check(
 async function readSupply(executor: Executor): Promise<SupplyBreakdown> {
   const result = await executor.execute(sql`
     SELECT
-      (SELECT coalesce(sum(total_supply), 0)::int FROM government) AS total_supply,
-      (SELECT coalesce(sum(balance), 0)::int      FROM government) AS treasury,
-      (SELECT coalesce(sum(balance), 0)::int      FROM users)      AS user_held,
-      (SELECT coalesce(sum(balance), 0)::int      FROM companies)  AS company_held
+      (SELECT coalesce(sum(total_supply), 0)::int   FROM government) AS total_supply,
+      (SELECT coalesce(sum(retired_supply), 0)::int FROM government) AS retired_supply,
+      (SELECT coalesce(sum(balance), 0)::int        FROM government) AS treasury,
+      (SELECT coalesce(sum(balance), 0)::int        FROM users)      AS user_held,
+      (SELECT coalesce(sum(balance), 0)::int        FROM companies)  AS company_held
   `);
   const row = (result as unknown as { rows: Record<string, number>[] }).rows[0] ?? {};
   const totalSupply = Number(row.total_supply ?? 0);
+  const retiredSupply = Number(row.retired_supply ?? 0);
   const treasury = Number(row.treasury ?? 0);
   const userHeld = Number(row.user_held ?? 0);
   const companyHeld = Number(row.company_held ?? 0);
-  const accounted = treasury + userHeld + companyHeld;
+  const accounted = treasury + userHeld + companyHeld + retiredSupply;
   return {
     totalSupply,
     treasury,
@@ -652,6 +654,59 @@ export async function runHealthCheck(executor: Executor = db): Promise<Reconcile
         FROM marketplace_orders o
         JOIN invoices i ON i.id = o.invoice_id
         WHERE i.subtotal <> o.subtotal
+      `,
+    }),
+  );
+
+  // --- V4: Accounting checkpoints, Market positions & Exchange purchases ----
+  checks.push(
+    await check(executor, {
+      key: "ACCOUNTING_CHECKPOINTS_INTACT",
+      label: "Every accounting checkpoint is internally balanced and linked to a cleared archive batch",
+      severity: "CRITICAL",
+      ok: "Every accounting checkpoint satisfies supply and gross/tax/net balance invariants.",
+      bad: (n) => `${n} accounting checkpoint(s) have a supply or volume discrepancy.`,
+      query: sql`
+        SELECT cp.checkpoint_number AS id
+        FROM accounting_checkpoints cp
+        LEFT JOIN archive_batches ab ON ab.id = cp.archive_batch_id
+        WHERE ab.id IS NULL
+           OR (cp.treasury_balance_snapshot + cp.user_held_balance_snapshot + cp.company_held_balance_snapshot + cp.retired_supply_snapshot) <> cp.total_supply_snapshot
+           OR cp.gross_volume_cleared <> (cp.tax_volume_cleared + cp.net_volume_cleared)
+      `,
+    }),
+  );
+
+  checks.push(
+    await check(executor, {
+      key: "MARKET_POSITIONS_CONSISTENT",
+      label: "Every synthetic market position has valid non-negative holdings and cost basis",
+      severity: "CRITICAL",
+      ok: "Every market position has non-negative units and consistent cost basis.",
+      bad: (n) => `${n} market position(s) have negative holdings or orphaned cost basis.`,
+      query: sql`
+        SELECT 'position:' || user_id::text AS id
+        FROM market_positions
+        WHERE units_held < 0
+           OR total_cost_basis < 0
+           OR (units_held = 0 AND total_cost_basis <> 0)
+      `,
+    }),
+  );
+
+  checks.push(
+    await check(executor, {
+      key: "EXCHANGE_PURCHASES_CONSISTENT",
+      label: "Every credited Exchange purchase has a recorded ledger reference and valid policy snapshot",
+      severity: "CRITICAL",
+      ok: "Every credited Exchange purchase carries a valid ledger reference and package snapshot.",
+      bad: (n) => `${n} Exchange purchase(s) are credited without a ledger reference or valid snapshot.`,
+      query: sql`
+        SELECT purchase_number AS id
+        FROM exchange_purchases
+        WHERE (status IN ('CREDITED', 'REFUNDED') AND credited_tx_ref IS NULL)
+           OR total_aeros_snapshot <> (aeros_amount_snapshot + bonus_aeros_snapshot)
+           OR total_aeros_snapshot <= 0
       `,
     }),
   );

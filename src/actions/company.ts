@@ -405,7 +405,11 @@ export async function dismissListingAction(
   const parsed = listingIdSchema.safeParse({ listingId: formData.get("listingId") });
   if (!parsed.success) return { ok: false, error: "Invalid request." };
 
-  await dismissListing(parsed.data.listingId, user.id);
+  try {
+    await dismissListing(parsed.data.listingId, user.id);
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "Could not hide the listing.") };
+  }
   revalidatePath("/marketplace");
   return { ok: true, data: undefined };
 }
@@ -424,7 +428,11 @@ export async function undismissListingAction(
   const parsed = listingIdSchema.safeParse({ listingId: formData.get("listingId") });
   if (!parsed.success) return { ok: false, error: "Invalid request." };
 
-  await undismissListing(parsed.data.listingId, user.id);
+  try {
+    await undismissListing(parsed.data.listingId, user.id);
+  } catch (e) {
+    return { ok: false, error: errMsg(e, "Could not restore the listing.") };
+  }
   revalidatePath("/marketplace");
   return { ok: true, data: undefined };
 }

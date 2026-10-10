@@ -145,11 +145,13 @@ export default async function DashboardPage() {
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <QuickAction href="/pay" label="Pay" />
+        <QuickAction href="/exchange" label="Aeros Exchange" />
+        <QuickAction href="/aeros-market" label="Aeros Market" />
         {/* The Market has no slot in the five-item mobile tab bar, so this is
             how a phone reaches it. */}
-        <QuickAction href="/market" label="Market" />
+        <QuickAction href="/market" label="Goods Market" />
         <QuickAction href="/market/orders" label="My Orders" />
-        <QuickAction href="/people" label="People" />
+        <QuickAction href="/refunds" label="Refund Center" />
         <QuickAction href="/companies" label="Companies" />
         <QuickAction href="/transactions" label="Activity" />
       </section>

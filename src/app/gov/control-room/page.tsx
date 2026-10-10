@@ -1,6 +1,11 @@
 import Link from "next/link";
-import { adminSearch, getEconomicOverview } from "@/lib/queries";
+import {
+  adminSearch,
+  getEconomicOverview,
+  getGovernmentFeatureFlags,
+} from "@/lib/queries";
 import { CURRENCY_NAME } from "@/lib/constants";
+import { GovV4FeatureTogglesForm } from "@/components/v4/v4-forms";
 
 /**
  * Control Room — the deepest administrative view (spec §10, §11).
@@ -14,9 +19,10 @@ export default async function ControlRoomPage({ searchParams }: PageProps<"/gov/
   const params = await searchParams;
   const q = typeof params.q === "string" ? params.q : "";
 
-  const [results, overview] = await Promise.all([
+  const [results, overview, flags] = await Promise.all([
     q ? adminSearch(q) : null,
     getEconomicOverview(),
+    getGovernmentFeatureFlags(),
   ]);
 
   const totalHits = results
@@ -34,7 +40,7 @@ export default async function ControlRoomPage({ searchParams }: PageProps<"/gov/
         <h1 className="text-2xl font-semibold tracking-tight">Control Room</h1>
         <p className="mt-1 text-sm text-muted">
           Search every record in the system by username, name, transaction reference, invoice,
-          loan or complaint number.
+          loan or complaint number, and manage server-enforced V4 feature switches.
         </p>
       </div>
 
@@ -173,14 +179,36 @@ export default async function ControlRoomPage({ searchParams }: PageProps<"/gov/
               system health page
             </Link>
             , which runs the full reconciliation — orders, ratings, promotions, contracts, loans,
-            invoices and ownership — and shows the database&rsquo;s size and temporary-row counts.
+            invoices, checkpoints and ownership — and shows the database&rsquo;s size and
+            temporary-row counts.
           </p>
         </section>
       )}
 
+      <section className="card border-[#111111] p-5">
+        <h2 className="font-medium">V4 Server-Enforced Feature Controls</h2>
+        <p className="mt-1 mb-4 text-xs text-muted">
+          Toggling any switch below immediately enforces the restriction across all server actions
+          and API routes, and writes an audit record.
+        </p>
+        <GovV4FeatureTogglesForm toggles={flags} />
+      </section>
+
       <section className="card p-5">
         <h2 className="mb-3 font-medium">Administrative areas</h2>
         <div className="flex flex-wrap gap-2">
+          <Link href="/gov/exchange" className="btn btn-secondary text-sm">
+            Aeros Exchange
+          </Link>
+          <Link href="/gov/market" className="btn btn-secondary text-sm">
+            Market Index
+          </Link>
+          <Link href="/gov/refunds" className="btn btn-secondary text-sm">
+            Refund Center
+          </Link>
+          <Link href="/gov/archive" className="btn btn-secondary text-sm">
+            Archive Center
+          </Link>
           <Link href="/gov/users" className="btn btn-secondary text-sm">
             Users
           </Link>

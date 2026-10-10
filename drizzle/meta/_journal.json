@@ -57,6 +57,13 @@
       "when": 1790765300184,
       "tag": "0007_max_companies",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791638000000,
+      "tag": "0008_v4_upgrade",
+      "breakpoints": true
     }
   ]
 }
