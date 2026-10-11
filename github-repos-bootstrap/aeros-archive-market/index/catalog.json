@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "4.1.0",
+  "repository": "aeros-archive-market",
+  "shardGeneration": 1,
+  "datasets": [
+    "settled_market_orders",
+    "old_market_candles"
+  ],
+  "initializedAt": "2026-04-20T00:00:00.000Z"
+}

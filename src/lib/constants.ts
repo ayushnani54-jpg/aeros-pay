@@ -245,6 +245,110 @@ export const ARCHIVE_DATASET_KEYS = [
   "settled_market_orders",
   "closed_refunds",
   "old_market_candles",
+  "settled_contracts",
+  "repaid_loans",
+  "settled_invoices",
+  "completed_marketplace_orders",
+  "closed_company_sales",
+  "closed_exchange_purchases",
+  "audit_logs_history",
 ] as const;
 export type ArchiveDatasetKey = (typeof ARCHIVE_DATASET_KEYS)[number];
+
+// ---------------------------------------------------------------------------
+// V4.1 — 5-Repository GitHub Permanent Archive Architecture & 24h Workflow
+// ---------------------------------------------------------------------------
+
+export const GITHUB_ARCHIVE_REPO_KEYS = [
+  "aeros-archive-ledger",
+  "aeros-archive-contracts",
+  "aeros-archive-market",
+  "aeros-archive-economy",
+  "aeros-archive-audit",
+] as const;
+export type GithubArchiveRepoKey = (typeof GITHUB_ARCHIVE_REPO_KEYS)[number];
+
+export const GITHUB_ARCHIVE_REPOS: Record<
+  GithubArchiveRepoKey,
+  {
+    repoKey: GithubArchiveRepoKey;
+    defaultRepoName: string;
+    envVarName: string;
+    title: string;
+    description: string;
+    datasets: readonly ArchiveDatasetKey[];
+  }
+> = {
+  "aeros-archive-ledger": {
+    repoKey: "aeros-archive-ledger",
+    defaultRepoName: "aeros-archive-ledger",
+    envVarName: "GITHUB_REPO_LEDGER",
+    title: "Repository 1 — Ledger & Settlements Archive",
+    description:
+      "Completed transfers, tax records, fee settlements, closed refunds, and credited/closed Exchange acquisitions.",
+    datasets: ["transactions_history", "closed_refunds", "closed_exchange_purchases"],
+  },
+  "aeros-archive-contracts": {
+    repoKey: "aeros-archive-contracts",
+    defaultRepoName: "aeros-archive-contracts",
+    envVarName: "GITHUB_REPO_CONTRACTS",
+    title: "Repository 2 — Contracts & Loans Archive",
+    description:
+      "Completed/expired contracts, contract applications, repaid/closed company loans, and instalment schedules.",
+    datasets: ["settled_contracts", "repaid_loans"],
+  },
+  "aeros-archive-market": {
+    repoKey: "aeros-archive-market",
+    defaultRepoName: "aeros-archive-market",
+    envVarName: "GITHUB_REPO_MARKET",
+    title: "Repository 3 — Synthetic Market & Trading Archive",
+    description:
+      "Historical 5m/15m/1h OHLCV candles, executed BUY/SELL/SHORT/COVER orders, and closed position settlements.",
+    datasets: ["settled_market_orders", "old_market_candles"],
+  },
+  "aeros-archive-economy": {
+    repoKey: "aeros-archive-economy",
+    defaultRepoName: "aeros-archive-economy",
+    envVarName: "GITHUB_REPO_ECONOMY",
+    title: "Repository 4 — Commercial Economy Archive",
+    description:
+      "Paid/cancelled/expired invoices, completed/closed marketplace orders, and closed company sale listings/offers.",
+    datasets: [
+      "settled_invoices",
+      "completed_marketplace_orders",
+      "closed_company_sales",
+    ],
+  },
+  "aeros-archive-audit": {
+    repoKey: "aeros-archive-audit",
+    defaultRepoName: "aeros-archive-audit",
+    envVarName: "GITHUB_REPO_AUDIT",
+    title: "Repository 5 — Government & System Audit Archive",
+    description:
+      "Administrative actions, policy changes, reconciliation history, and archive verification events.",
+    datasets: ["audit_logs_history"],
+  },
+};
+
+export const DATASET_TO_GITHUB_REPO: Record<ArchiveDatasetKey, GithubArchiveRepoKey> = {
+  transactions_history: "aeros-archive-ledger",
+  closed_refunds: "aeros-archive-ledger",
+  closed_exchange_purchases: "aeros-archive-ledger",
+  settled_contracts: "aeros-archive-contracts",
+  repaid_loans: "aeros-archive-contracts",
+  settled_market_orders: "aeros-archive-market",
+  old_market_candles: "aeros-archive-market",
+  settled_invoices: "aeros-archive-economy",
+  completed_marketplace_orders: "aeros-archive-economy",
+  closed_company_sales: "aeros-archive-economy",
+  audit_logs_history: "aeros-archive-audit",
+};
+
+/** Default 24-hour eligibility window before terminal records are archived to GitHub. */
+export const DEFAULT_GITHUB_ARCHIVE_MIN_AGE_HOURS = 24;
+
+/** Conservative GitHub repository storage limits (400 MB soft warning, 750 MB hard shard rotation). */
+export const GITHUB_REPO_WARNING_BYTES = 400 * 1024 * 1024; // 419,430,400 bytes
+export const GITHUB_REPO_HARD_LIMIT_BYTES = 750 * 1024 * 1024; // 786,432,000 bytes
+export const GITHUB_BATCH_MAX_RECORDS = 500;
 

@@ -108,6 +108,9 @@ export default async function GovMarketPage() {
             maxStepChangeBp: state.maxStepChangeBp,
             maxOrderUnits: state.maxOrderUnits,
             userCooldownSeconds: state.userCooldownSeconds,
+            shortSellingEnabled: state.shortSellingEnabled,
+            shortCollateralRatioBp: state.shortCollateralRatioBp,
+            maxShortUnitsPerUser: state.maxShortUnitsPerUser,
           }}
         />
       </section>
@@ -134,7 +137,11 @@ export default async function GovMarketPage() {
                       className={`rounded px-2 py-0.5 text-xs font-semibold ${
                         ord.side === "BUY"
                           ? "bg-[#e8f5ee] text-success"
-                          : "bg-[#fdecea] text-danger"
+                          : ord.side === "SHORT"
+                            ? "bg-[#fff6e0] text-[#8a5a00]"
+                            : ord.side === "COVER"
+                              ? "bg-surface text-foreground"
+                              : "bg-[#fdecea] text-danger"
                       }`}
                     >
                       {ord.side}
@@ -153,8 +160,11 @@ export default async function GovMarketPage() {
                   <p className="mt-0.5 text-xs text-muted">
                     {formatDateTime(ord.createdAt)}
                     {ord.txRef ? ` · Ledger ref ${ord.txRef}` : ""}
-                    {ord.side === "SELL"
+                    {ord.side === "SELL" || ord.side === "COVER"
                       ? ` · Realized P/L: ${ord.realizedPnlDelta >= 0 ? "+" : ""}${ord.realizedPnlDelta.toLocaleString()} ${CURRENCY_NAME}`
+                      : ""}
+                    {ord.side === "SHORT"
+                      ? ` · Collateral locked: ${ord.costBasisDelta.toLocaleString()} ${CURRENCY_NAME}`
                       : ""}
                   </p>
                 </div>

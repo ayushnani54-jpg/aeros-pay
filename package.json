@@ -11,7 +11,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "seed:government": "tsx scripts/seed-government.ts",
-    "test:v4": "tsx --conditions react-server scripts/test-v4.ts"
+    "test:v4": "tsx --conditions react-server scripts/test-v4.ts",
+    "test:v4:1": "tsx --conditions react-server scripts/test-v4-1.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

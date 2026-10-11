@@ -2,6 +2,7 @@ import "server-only";
 import { createHash } from "crypto";
 import { db } from "@/db/client";
 import {
+  archiveBatches,
   government,
   marketCandles,
   marketOrders,
@@ -13,7 +14,7 @@ import {
   type MarketPosition,
   type MarketState,
 } from "@/db/schema";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { recordAudit } from "./audit";
 import { transferInTx } from "./payments";
 import { governmentWallet, userWallet } from "./wallets";
@@ -518,13 +519,19 @@ export async function syncMarketClock(): Promise<MarketState> {
 /**
  * Pure read-only chart query once initialized. Refreshing the page or switching
  * timeframes (`5m`, `15m`, `1h`) never advances or mutates the market!
+ *
+ * V4.1: Supports larger window limits (`12..500`), optional `before` pagination
+ * cursor, and automatic fallback merge of archived candles from `archive_batches`
+ * when historical windows reach into cleared candle batches.
  */
 export async function getMarketChartData(
   timeframe: MarketTimeframe = "15m",
   limit = 48,
+  before?: Date | null,
 ): Promise<{
   state: MarketState;
   candles: MarketCandle[];
+  hasOlderHistory: boolean;
   stats24h: {
     changeAeros: number;
     changePercent: string;
@@ -536,15 +543,94 @@ export async function getMarketChartData(
   };
 }> {
   const state = await ensureMarketInitialized();
+  const safeLimit = Math.max(12, Math.min(500, Math.trunc(limit)));
+
+  const whereCond = before
+    ? and(eq(marketCandles.timeframe, timeframe), lt(marketCandles.bucketStart, before))
+    : eq(marketCandles.timeframe, timeframe);
 
   const descCandles = await db
     .select()
     .from(marketCandles)
-    .where(eq(marketCandles.timeframe, timeframe))
+    .where(whereCond)
     .orderBy(desc(marketCandles.bucketStart))
-    .limit(limit);
+    .limit(safeLimit + 1);
 
-  const candles = [...descCandles].reverse();
+  let hasOlderHistory = descCandles.length > safeLimit;
+  const trimmedDesc = descCandles.slice(0, safeLimit);
+
+  // If the requested window extends beyond Neon's retained candles, check
+  // archived candle batches so historical chart panning still works seamlessly.
+  if (trimmedDesc.length < safeLimit) {
+    try {
+      const archivedBatches = await db
+        .select({
+          manifestJson: archiveBatches.manifestJson,
+        })
+        .from(archiveBatches)
+        .where(eq(archiveBatches.datasetKey, "old_market_candles"))
+        .orderBy(desc(archiveBatches.createdAt))
+        .limit(5);
+
+      const seenBuckets = new Set(trimmedDesc.map((c) => c.bucketStart.getTime()));
+      for (const b of archivedBatches) {
+        const manifest = b.manifestJson as {
+          archivedCandlesPreview?: Array<{
+            id: string;
+            timeframe: string;
+            bucketStart: string;
+            openPrice: number;
+            highPrice: number;
+            lowPrice: number;
+            closePrice: number;
+            volumeUnits: number;
+            volumeAeros: number;
+            tradeCount: number;
+            buyUnits: number;
+            sellUnits: number;
+            isHighVolatility: boolean;
+            methodologyVersion: string;
+            createdAt: string;
+          }>;
+        } | null;
+        const preview = manifest?.archivedCandlesPreview ?? [];
+        for (const row of preview) {
+          if (row.timeframe !== timeframe) continue;
+          const bDate = new Date(row.bucketStart);
+          if (before && bDate.getTime() >= before.getTime()) continue;
+          if (seenBuckets.has(bDate.getTime())) continue;
+          seenBuckets.add(bDate.getTime());
+          trimmedDesc.push({
+            id: row.id,
+            timeframe: row.timeframe,
+            bucketStart: bDate,
+            openPrice: row.openPrice,
+            highPrice: row.highPrice,
+            lowPrice: row.lowPrice,
+            closePrice: row.closePrice,
+            volumeUnits: row.volumeUnits,
+            volumeAeros: row.volumeAeros,
+            tradeCount: row.tradeCount,
+            buyUnits: row.buyUnits,
+            sellUnits: row.sellUnits,
+            isHighVolatility: row.isHighVolatility,
+            methodologyVersion: row.methodologyVersion,
+            createdAt: new Date(row.createdAt),
+          });
+          if (trimmedDesc.length >= safeLimit) {
+            hasOlderHistory = true;
+            break;
+          }
+        }
+        if (trimmedDesc.length >= safeLimit) break;
+      }
+      trimmedDesc.sort((a, b) => b.bucketStart.getTime() - a.bucketStart.getTime());
+    } catch {
+      // Non-fatal if archive table is not yet populated
+    }
+  }
+
+  const candles = [...trimmedDesc].reverse();
 
   const since24h = new Date(Date.now() - 24 * ONE_HOUR_MS);
   const [rollup24h] = await db
@@ -571,6 +657,7 @@ export async function getMarketChartData(
   return {
     state,
     candles,
+    hasOlderHistory,
     stats24h: {
       changeAeros,
       changePercent: `${changePctNum >= 0 ? "+" : ""}${changePctNum.toFixed(2)}%`,
@@ -588,6 +675,11 @@ export async function getUserMarketPortfolio(userId: string): Promise<{
   averageEntryPrice: number;
   marketValueAeros: number;
   unrealizedPnlAeros: number;
+  shortAverageEntryPrice: number;
+  shortLiabilityAeros: number;
+  shortUnrealizedPnlAeros: number;
+  shortNetEquityAeros: number;
+  totalUnrealizedPnlAeros: number;
   recentOrders: MarketOrder[];
 }> {
   const state = await ensureMarketInitialized();
@@ -598,7 +690,7 @@ export async function getUserMarketPortfolio(userId: string): Promise<{
       .from(marketOrders)
       .where(eq(marketOrders.userId, userId))
       .orderBy(desc(marketOrders.createdAt))
-      .limit(30),
+      .limit(40),
   ]);
 
   const position: MarketPosition = pos ?? {
@@ -608,6 +700,11 @@ export async function getUserMarketPortfolio(userId: string): Promise<{
     realizedPnl: 0,
     totalBoughtUnits: 0,
     totalSoldUnits: 0,
+    shortUnitsHeld: 0,
+    shortEntryNotional: 0,
+    shortCollateralLocked: 0,
+    totalShortedUnits: 0,
+    totalCoveredUnits: 0,
     lastTradeAt: null,
     updatedAt: new Date(),
   };
@@ -620,11 +717,30 @@ export async function getUserMarketPortfolio(userId: string): Promise<{
   const unrealizedPnlAeros =
     position.unitsHeld > 0 ? marketValueAeros - position.totalCostBasis : 0;
 
+  const shortAverageEntryPrice =
+    position.shortUnitsHeld > 0
+      ? Math.round(position.shortEntryNotional / position.shortUnitsHeld)
+      : 0;
+  const shortLiabilityAeros = position.shortUnitsHeld * state.currentPrice;
+  const shortUnrealizedPnlAeros =
+    position.shortUnitsHeld > 0
+      ? position.shortEntryNotional - shortLiabilityAeros
+      : 0;
+  const shortNetEquityAeros =
+    position.shortUnitsHeld > 0
+      ? Math.max(0, position.shortCollateralLocked + shortUnrealizedPnlAeros)
+      : 0;
+
   return {
     position,
     averageEntryPrice,
     marketValueAeros,
     unrealizedPnlAeros,
+    shortAverageEntryPrice,
+    shortLiabilityAeros,
+    shortUnrealizedPnlAeros,
+    shortNetEquityAeros,
+    totalUnrealizedPnlAeros: unrealizedPnlAeros + shortUnrealizedPnlAeros,
     recentOrders,
   };
 }
@@ -638,22 +754,24 @@ async function nextMarketOrderNumber(tx: Pick<typeof db, "execute">): Promise<st
 }
 
 /**
- * Executes a BUY or SELL order on the Aeros Market.
+ * Executes a BUY, SELL, SHORT, or COVER order on the Aeros Market.
  *
- * SECURITY & FAIRNESS GUARANTEES (Spec §7):
- * - Server-enforced feature checks (`marketEnabled` AND `tradingEnabled`).
- * - Client never chooses the execution price; `expectedPrice` is only used to
- *   protect the user against stale prices beyond `maxSlippageBp`.
- * - Locks `market_state` and `market_positions` `FOR UPDATE` inside the same
- *   database transaction as `transferInTx`.
- * - Enforces per-order size cap (`maxOrderUnits`) and per-user cooldown
- *   (`userCooldownSeconds`).
- * - Updates real executed volume on `market_candles` and applies a modest,
- *   bounded order-flow impact.
+ * V4.1 SHORT-SELLING & COLLATERAL RULES (Spec §6.B):
+ * - Users can open a collateralized short position (`SHORT`) without owning long
+ *   units. Moreover, if a user submits `SELL` while holding `0` long units and
+ *   `shortSellingEnabled` is true, it automatically executes as `SHORT`.
+ * - Opening a short locks `ceil(quantity * executionPrice * shortCollateralRatioBp / 10000)`
+ *   Aeros (default 100% collateralized) from the user's wallet into the
+ *   Government Treasury via `transferInTx`.
+ * - Closing (`COVER`) releases the proportional locked collateral plus realized
+ *   short P/L (`releasedEntryNotional - quantity * executionPrice`), clamped at
+ *   `>= 0` so a user's wallet balance can never become negative.
+ * - Preserves `SUPPLY_INVARIANT` (`treasury + userHeld + companyHeld + retiredSupply = totalSupply`)
+ *   at all times.
  */
 export async function placeMarketOrder(params: {
   userId: string;
-  side: "BUY" | "SELL";
+  side: "BUY" | "SELL" | "SHORT" | "COVER";
   quantity: number;
   expectedPrice: number;
   maxSlippageBp?: number;
@@ -746,12 +864,21 @@ export async function placeMarketOrder(params: {
       );
     }
 
+    // V4.1: If the user submits SELL with 0 long holdings and short selling is
+    // enabled, seamlessly route to SHORT (opening a collateralized short position).
+    let effectiveSide: "BUY" | "SELL" | "SHORT" | "COVER" = params.side;
+    if (params.side === "SELL" && position.unitsHeld === 0 && state.shortSellingEnabled) {
+      effectiveSide = "SHORT";
+    }
+
     // Authoritative server execution price
     const executionPrice = state.currentPrice;
     const slippageBp = Math.max(0, Math.min(2000, params.maxSlippageBp ?? 200));
 
-    // Staleness / slippage check
-    if (params.side === "BUY") {
+    // Staleness / slippage check:
+    // BUY and COVER are upward-sensitive (reject if executionPrice > maxAcceptablePrice).
+    // SELL and SHORT are downward-sensitive (reject if executionPrice < minAcceptablePrice).
+    if (effectiveSide === "BUY" || effectiveSide === "COVER") {
       const maxAcceptablePrice = Math.ceil(
         (params.expectedPrice * (10000 + slippageBp)) / 10000,
       );
@@ -778,7 +905,7 @@ export async function placeMarketOrder(params: {
     let costBasisDelta = 0;
     let realizedPnlDelta = 0;
 
-    if (params.side === "BUY") {
+    if (effectiveSide === "BUY") {
       const transfer = await transferInTx(tx, {
         from: userWallet(user.id),
         to: governmentWallet(gov.id),
@@ -800,10 +927,10 @@ export async function placeMarketOrder(params: {
           updatedAt: now,
         })
         .where(eq(marketPositions.userId, user.id));
-    } else {
+    } else if (effectiveSide === "SELL") {
       if (position.unitsHeld < params.quantity) {
         throw new MarketError(
-          `Insufficient index holdings: you hold ${position.unitsHeld} units and cannot sell ${params.quantity} units.`,
+          `Insufficient long holdings: you hold ${position.unitsHeld} long unit(s) and cannot sell ${params.quantity} unit(s). Sell up to ${position.unitsHeld} long unit(s) first, or use Short to open a short position.`,
         );
       }
 
@@ -827,7 +954,8 @@ export async function placeMarketOrder(params: {
       txRef = transfer.txRef;
 
       const nextUnits = position.unitsHeld - params.quantity;
-      const nextCostBasis = nextUnits === 0 ? 0 : Math.max(0, position.totalCostBasis - removedCostBasis);
+      const nextCostBasis =
+        nextUnits === 0 ? 0 : Math.max(0, position.totalCostBasis - removedCostBasis);
 
       await tx
         .update(marketPositions)
@@ -840,12 +968,121 @@ export async function placeMarketOrder(params: {
           updatedAt: now,
         })
         .where(eq(marketPositions.userId, user.id));
+    } else if (effectiveSide === "SHORT") {
+      if (!state.shortSellingEnabled) {
+        throw new MarketError(
+          "Short selling is currently disabled by the Government.",
+        );
+      }
+
+      if (position.shortUnitsHeld + params.quantity > state.maxShortUnitsPerUser) {
+        throw new MarketError(
+          `Short exposure limit exceeded: maximum open short position is ${state.maxShortUnitsPerUser.toLocaleString()} units (you currently hold ${position.shortUnitsHeld.toLocaleString()} short units).`,
+        );
+      }
+
+      const collateralRequired = Math.max(
+        1,
+        Math.round((totalAeros * state.shortCollateralRatioBp) / 10000),
+      );
+      if (user.balance < collateralRequired) {
+        throw new MarketError(
+          `Insufficient collateral for short order: opening ${params.quantity} short unit(s) @ ${executionPrice} ${CURRENCY_NAME} requires ${collateralRequired.toLocaleString()} ${CURRENCY_NAME} collateral (${(state.shortCollateralRatioBp / 100).toFixed(0)}%), but your balance is ${user.balance.toLocaleString()} ${CURRENCY_NAME}.`,
+        );
+      }
+
+      const transfer = await transferInTx(tx, {
+        from: userWallet(user.id),
+        to: governmentWallet(gov.id),
+        amount: collateralRequired,
+        type: "MARKET_TRADE_BUY",
+        reason: `Market SHORT Collateral Lock ${orderNumber}: ${params.quantity} AMI @ ${executionPrice} ${CURRENCY_NAME} (${collateralRequired} ${CURRENCY_NAME} collateral)`,
+        forcedTaxRateBp: 0,
+      });
+      txRef = transfer.txRef;
+      costBasisDelta = collateralRequired;
+      realizedPnlDelta = 0;
+
+      await tx
+        .update(marketPositions)
+        .set({
+          shortUnitsHeld: position.shortUnitsHeld + params.quantity,
+          shortEntryNotional: position.shortEntryNotional + totalAeros,
+          shortCollateralLocked: position.shortCollateralLocked + collateralRequired,
+          totalShortedUnits: position.totalShortedUnits + params.quantity,
+          lastTradeAt: now,
+          updatedAt: now,
+        })
+        .where(eq(marketPositions.userId, user.id));
+    } else {
+      // COVER (close partial or full short position)
+      if (position.shortUnitsHeld < params.quantity) {
+        throw new MarketError(
+          `Insufficient open short position: you have ${position.shortUnitsHeld} shorted unit(s) and cannot cover ${params.quantity} unit(s).`,
+        );
+      }
+
+      const releasedEntryNotional =
+        position.shortUnitsHeld === params.quantity
+          ? position.shortEntryNotional
+          : Math.round((position.shortEntryNotional * params.quantity) / position.shortUnitsHeld);
+
+      const releasedCollateral =
+        position.shortUnitsHeld === params.quantity
+          ? position.shortCollateralLocked
+          : Math.round((position.shortCollateralLocked * params.quantity) / position.shortUnitsHeld);
+
+      // Short P/L: profit when executionPrice < entryPrice (totalAeros < releasedEntryNotional)
+      const rawShortPnl = releasedEntryNotional - totalAeros;
+      // Negative-balance protection: payout cannot be less than 0
+      const payoutAeros = Math.max(0, releasedCollateral + rawShortPnl);
+      realizedPnlDelta = payoutAeros - releasedCollateral;
+      costBasisDelta = -releasedCollateral;
+
+      if (payoutAeros > 0) {
+        const transfer = await transferInTx(tx, {
+          from: governmentWallet(gov.id),
+          to: userWallet(user.id),
+          amount: payoutAeros,
+          type: "MARKET_TRADE_SELL",
+          reason: `Market COVER Settlement ${orderNumber}: covered ${params.quantity} AMI @ ${executionPrice} ${CURRENCY_NAME} (collateral ${releasedCollateral}, P/L ${realizedPnlDelta >= 0 ? "+" : ""}${realizedPnlDelta})`,
+          forcedTaxRateBp: 0,
+        });
+        txRef = transfer.txRef;
+      } else {
+        // 100% of released collateral was absorbed by adverse price movement;
+        // collateral already sits in the Government Treasury, so no additional transfer is needed.
+        txRef = `FORFEITED-${orderNumber}`;
+      }
+
+      const nextShortUnits = position.shortUnitsHeld - params.quantity;
+      const nextShortNotional =
+        nextShortUnits === 0
+          ? 0
+          : Math.max(0, position.shortEntryNotional - releasedEntryNotional);
+      const nextShortCollateral =
+        nextShortUnits === 0
+          ? 0
+          : Math.max(0, position.shortCollateralLocked - releasedCollateral);
+
+      await tx
+        .update(marketPositions)
+        .set({
+          shortUnitsHeld: nextShortUnits,
+          shortEntryNotional: nextShortNotional,
+          shortCollateralLocked: nextShortCollateral,
+          realizedPnl: position.realizedPnl + realizedPnlDelta,
+          totalCoveredUnits: position.totalCoveredUnits + params.quantity,
+          lastTradeAt: now,
+          updatedAt: now,
+        })
+        .where(eq(marketPositions.userId, user.id));
     }
 
     // Modest bounded immediate demand impact:
-    // Small orders nudge netOrderFlowUnits; only when accumulated order flow
-    // crosses a meaningful threshold does currentPrice move by ±1..maxStep within bounds.
-    const signedUnits = params.side === "BUY" ? params.quantity : -params.quantity;
+    // BUY and COVER exert positive (buying) order flow; SELL and SHORT exert negative (selling) order flow.
+    const isBuyPressure = effectiveSide === "BUY" || effectiveSide === "COVER";
+    const signedUnits = isBuyPressure ? params.quantity : -params.quantity;
     const nextNetFlow = state.netOrderFlowUnits + signedUnits;
     const nextTraders = state.activeBucketTraders + 1;
 
@@ -858,8 +1095,6 @@ export async function placeMarketOrder(params: {
 
     let priceDelta = Math.round((executionPrice * impactBp) / 10000);
     if (priceDelta === 0 && Math.abs(nextNetFlow) >= 15 && state.demandSensitivityBp > 0) {
-      // Deterministic tie-breaker so two BUY orders can create a small +1 Aeros
-      // nudge without guaranteeing it on every single order
       const tieDigest = createHash("sha256")
         .update(`${state.seedKey}:${orderNumber}:${nextNetFlow}`)
         .digest();
@@ -883,8 +1118,8 @@ export async function placeMarketOrder(params: {
       volumeUnitsDelta: params.quantity,
       volumeAerosDelta: totalAeros,
       tradeCountDelta: 1,
-      buyUnitsDelta: params.side === "BUY" ? params.quantity : 0,
-      sellUnitsDelta: params.side === "SELL" ? params.quantity : 0,
+      buyUnitsDelta: isBuyPressure ? params.quantity : 0,
+      sellUnitsDelta: isBuyPressure ? 0 : params.quantity,
       isHighVolatility: false,
       methodologyVersion: state.methodologyVersion,
     });
@@ -907,7 +1142,7 @@ export async function placeMarketOrder(params: {
       .values({
         orderNumber,
         userId: user.id,
-        side: params.side,
+        side: effectiveSide,
         quantity: params.quantity,
         expectedPrice: params.expectedPrice,
         maxSlippageBp: slippageBp,
@@ -923,20 +1158,23 @@ export async function placeMarketOrder(params: {
       .returning();
 
     await recordAudit(tx, {
-      action: params.side === "BUY" ? "MARKET_ORDER_BUY" : "MARKET_ORDER_SELL",
+      action: `MARKET_ORDER_${effectiveSide}`,
       actorType: "USER",
       actorId: user.id,
       actorLabel: user.username,
       targetType: "MARKET_ORDER",
       targetId: createdOrder.id,
       previousValue: `${executionPrice} ${CURRENCY_NAME}`,
-      newValue: `${orderNumber}: ${params.side} ${params.quantity} AMI @ ${executionPrice} ${CURRENCY_NAME} (${totalAeros} ${CURRENCY_NAME}, post=${postTradePrice})`,
+      newValue: `${orderNumber}: ${effectiveSide} ${params.quantity} AMI @ ${executionPrice} ${CURRENCY_NAME} (${totalAeros} ${CURRENCY_NAME}, post=${postTradePrice})`,
       metadata: {
         orderNumber,
-        side: params.side,
+        side: effectiveSide,
+        requestedSide: params.side,
         quantity: params.quantity,
         executionPrice,
         totalAeros,
+        costBasisDelta,
+        realizedPnlDelta,
         postTradePrice,
         txRef,
       },
@@ -959,6 +1197,9 @@ export async function updateMarketConfig(params: {
   maxStepChangeBp: number;
   maxOrderUnits: number;
   userCooldownSeconds: number;
+  shortSellingEnabled?: boolean;
+  shortCollateralRatioBp?: number;
+  maxShortUnitsPerUser?: number;
 }): Promise<MarketState> {
   await ensureMarketInitialized();
 
@@ -974,6 +1215,19 @@ export async function updateMarketConfig(params: {
       Math.min(params.maxPrice, state.currentPrice),
     );
 
+    const shortSellingEnabled =
+      params.shortSellingEnabled !== undefined
+        ? params.shortSellingEnabled
+        : state.shortSellingEnabled;
+    const shortCollateralRatioBp =
+      params.shortCollateralRatioBp !== undefined
+        ? params.shortCollateralRatioBp
+        : state.shortCollateralRatioBp;
+    const maxShortUnitsPerUser =
+      params.maxShortUnitsPerUser !== undefined
+        ? params.maxShortUnitsPerUser
+        : state.maxShortUnitsPerUser;
+
     const [updated] = await tx
       .update(marketState)
       .set({
@@ -987,6 +1241,9 @@ export async function updateMarketConfig(params: {
         maxStepChangeBp: params.maxStepChangeBp,
         maxOrderUnits: params.maxOrderUnits,
         userCooldownSeconds: params.userCooldownSeconds,
+        shortSellingEnabled,
+        shortCollateralRatioBp,
+        maxShortUnitsPerUser,
         updatedAt: new Date(),
       })
       .where(eq(marketState.id, 1))
@@ -999,8 +1256,8 @@ export async function updateMarketConfig(params: {
       actorLabel: params.govUsername,
       targetType: "MARKET_STATE",
       targetId: "1",
-      previousValue: `bounds=[${state.minPrice},${state.maxPrice}], vol=${state.baseVolatilityBp}bp, demand=${state.demandSensitivityBp}bp, maxStep=${state.maxStepChangeBp}bp`,
-      newValue: `bounds=[${updated.minPrice},${updated.maxPrice}], vol=${updated.baseVolatilityBp}bp, demand=${updated.demandSensitivityBp}bp, maxStep=${updated.maxStepChangeBp}bp`,
+      previousValue: `bounds=[${state.minPrice},${state.maxPrice}], vol=${state.baseVolatilityBp}bp, demand=${state.demandSensitivityBp}bp, maxStep=${state.maxStepChangeBp}bp, short=${state.shortSellingEnabled}`,
+      newValue: `bounds=[${updated.minPrice},${updated.maxPrice}], vol=${updated.baseVolatilityBp}bp, demand=${updated.demandSensitivityBp}bp, maxStep=${updated.maxStepChangeBp}bp, short=${updated.shortSellingEnabled}`,
       metadata: {
         minPrice: updated.minPrice,
         maxPrice: updated.maxPrice,
@@ -1009,6 +1266,9 @@ export async function updateMarketConfig(params: {
         maxStepChangeBp: updated.maxStepChangeBp,
         maxOrderUnits: updated.maxOrderUnits,
         userCooldownSeconds: updated.userCooldownSeconds,
+        shortSellingEnabled: updated.shortSellingEnabled,
+        shortCollateralRatioBp: updated.shortCollateralRatioBp,
+        maxShortUnitsPerUser: updated.maxShortUnitsPerUser,
       },
     });
 

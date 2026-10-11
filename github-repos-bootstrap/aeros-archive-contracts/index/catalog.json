@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "4.1.0",
+  "repository": "aeros-archive-contracts",
+  "shardGeneration": 1,
+  "datasets": [
+    "closed_invoices",
+    "closed_contracts",
+    "repaid_loans"
+  ],
+  "initializedAt": "2026-04-20T00:00:00.000Z"
+}

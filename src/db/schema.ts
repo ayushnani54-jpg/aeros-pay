@@ -248,6 +248,8 @@ export const exchangePurchaseStatusEnum = pgEnum("exchange_purchase_status", [
 export const marketOrderSideEnum = pgEnum("market_order_side", [
   "BUY",
   "SELL",
+  "SHORT",
+  "COVER",
 ]);
 
 export const marketOrderStatusEnum = pgEnum("market_order_status", [
@@ -2147,6 +2149,12 @@ export const marketState = pgTable(
     maxOrderUnits: integer("max_order_units").notNull().default(500),
     /** Minimum seconds between orders from the same user (anti-manipulation). */
     userCooldownSeconds: integer("user_cooldown_seconds").notNull().default(10),
+    /** V4.1: Whether collateralized short selling (SHORT / COVER) is enabled. */
+    shortSellingEnabled: boolean("short_selling_enabled").notNull().default(true),
+    /** V4.1: Required collateral ratio in basis points (10000 = 100% collateralized). */
+    shortCollateralRatioBp: integer("short_collateral_ratio_bp").notNull().default(10000),
+    /** V4.1: Maximum open short units a single user may hold concurrently. */
+    maxShortUnitsPerUser: integer("max_short_units_per_user").notNull().default(1000),
     /** Accumulated net (buyUnits - sellUnits) in the current 5-minute bucket. */
     netOrderFlowUnits: integer("net_order_flow_units").notNull().default(0),
     /** Distinct user count contributing to order flow in the current bucket. */
@@ -2182,6 +2190,11 @@ export const marketState = pgTable(
     ),
     check("market_state_max_order_positive", sql`${t.maxOrderUnits} >= 1`),
     check("market_state_cooldown_nonnegative", sql`${t.userCooldownSeconds} >= 0`),
+    check(
+      "market_state_short_collateral_bounds",
+      sql`${t.shortCollateralRatioBp} >= 10000 AND ${t.shortCollateralRatioBp} <= 20000`,
+    ),
+    check("market_state_max_short_positive", sql`${t.maxShortUnitsPerUser} >= 1`),
   ]),
 );
 
@@ -2231,14 +2244,22 @@ export const marketPositions = pgTable(
     userId: uuid("user_id")
       .primaryKey()
       .references(() => users.id),
-    /** Whole synthetic index units currently held by this user. */
+    /** Whole synthetic index units currently held long by this user. */
     unitsHeld: integer("units_held").notNull().default(0),
-    /** Total Aeros cost basis of currently held units. */
+    /** Total Aeros cost basis of currently held long units. */
     totalCostBasis: integer("total_cost_basis").notNull().default(0),
-    /** Cumulative realized P/L in whole Aeros across closed/sold units. */
+    /** Cumulative realized P/L in whole Aeros across closed long and short units. */
     realizedPnl: integer("realized_pnl").notNull().default(0),
     totalBoughtUnits: integer("total_bought_units").notNull().default(0),
     totalSoldUnits: integer("total_sold_units").notNull().default(0),
+    /** V4.1: Whole synthetic index units currently shorted by this user. */
+    shortUnitsHeld: integer("short_units_held").notNull().default(0),
+    /** V4.1: Total Aeros entry notional across open short units. */
+    shortEntryNotional: integer("short_entry_notional").notNull().default(0),
+    /** V4.1: Total Aeros collateral locked in the Treasury for open short units. */
+    shortCollateralLocked: integer("short_collateral_locked").notNull().default(0),
+    totalShortedUnits: integer("total_shorted_units").notNull().default(0),
+    totalCoveredUnits: integer("total_covered_units").notNull().default(0),
     lastTradeAt: timestamp("last_trade_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -2248,6 +2269,13 @@ export const marketPositions = pgTable(
     check(
       "market_positions_zero_units_zero_cost",
       sql`(${t.unitsHeld} > 0) OR (${t.totalCostBasis} = 0)`,
+    ),
+    check("market_positions_short_units_nonnegative", sql`${t.shortUnitsHeld} >= 0`),
+    check("market_positions_short_notional_nonnegative", sql`${t.shortEntryNotional} >= 0`),
+    check("market_positions_short_collateral_nonnegative", sql`${t.shortCollateralLocked} >= 0`),
+    check(
+      "market_positions_zero_short_units_zero_collateral",
+      sql`(${t.shortUnitsHeld} > 0) OR (${t.shortEntryNotional} = 0 AND ${t.shortCollateralLocked} = 0)`,
     ),
   ]),
 );
@@ -2270,9 +2298,9 @@ export const marketOrders = pgTable(
     executionPrice: integer("execution_price").notNull(),
     /** Always equal to quantity * executionPrice. */
     totalAeros: integer("total_aeros").notNull(),
-    /** Change in cost basis (+totalAeros on BUY, -removedCostBasis on SELL). */
+    /** Change in cost basis (+totalAeros on BUY, -removedCostBasis on SELL, +collateralLocked on SHORT, -releasedCollateral on COVER). */
     costBasisDelta: integer("cost_basis_delta").notNull().default(0),
-    /** Realized P/L on SELL orders (totalAeros - removedCostBasis). */
+    /** Realized P/L on SELL and COVER orders. */
     realizedPnlDelta: integer("realized_pnl_delta").notNull().default(0),
     status: marketOrderStatusEnum("status").notNull().default("EXECUTED"),
     rejectionReason: text("rejection_reason"),
@@ -2359,29 +2387,73 @@ export const refundRequests = pgTable(
 );
 
 // ===========================================================================
-// V4 — ARCHIVE CENTER & IMMUTABLE ACCOUNTING CHECKPOINTS (Spec §§8, 9, 10, 11)
+// V4 & V4.1 — ARCHIVE CENTER, 5-REPO GITHUB ARCHIVE & CHECKPOINTS (Spec §§2–11)
 // ===========================================================================
 //
-// Enforces Archive-Before-Clearing and Core Accounting Preservation:
-// 1. `archive_batches` stores the verified archive metadata, manifest, SHA-256
-//    checksum, exact record IDs covered, and the downloadable ZIP payload so
-//    serverless deployments can always download and re-verify an archive before
-//    clearing eligible historical rows.
-// 2. `accounting_checkpoints` stores immutable period accounting summaries
-//    whenever eligible historical `transactions` rows are cleared, preserving
-//    opening/closing balances, cumulative credits/debits, tax totals, and
-//    company lifetime sales figures forever.
+// Enforces Archive-Before-Clearing, Core Accounting Preservation, and V4.1
+// 5-Repository GitHub Permanent Historical Archival:
+// 1. `archive_repositories` tracks the 5 private GitHub repositories
+//    (`aeros-archive-ledger`, `aeros-archive-contracts`, `aeros-archive-market`,
+//    `aeros-archive-economy`, `aeros-archive-audit`), storage monitoring,
+//    warning/hard limits, and active shard generation.
+// 2. `archive_batches` stores the verified archive metadata, manifest, SHA-256
+//    checksum, exact record IDs covered, downloadable ZIP payload, and V4.1
+//    12-step resumable GitHub state-machine state (`SELECTING` -> `BUILDING` ->
+//    `UPLOADING` -> `UPLOADED` -> `VERIFYING` -> `VERIFIED` -> `CLEARING` ->
+//    `COMPLETED` / `FAILED_RETRYABLE` / `DEGRADED_HALTED`).
+// 3. `archived_record_ledger` tracks which records have been verified in GitHub
+//    so the 24h archiver is strictly idempotent and never duplicates uploads.
+// 4. `accounting_checkpoints` stores immutable period accounting summaries
+//    whenever eligible historical `transactions` rows are cleared.
 // ===========================================================================
+
+export const archiveRepositories = pgTable(
+  "archive_repositories",
+  {
+    /** 'aeros-archive-ledger' | 'aeros-archive-contracts' | 'aeros-archive-market' | 'aeros-archive-economy' | 'aeros-archive-audit' */
+    repoKey: varchar("repo_key", { length: 48 }).primaryKey(),
+    repoOwner: varchar("repo_owner", { length: 120 }).notNull().default(""),
+    repoName: varchar("repo_name", { length: 120 }).notNull(),
+    branch: varchar("branch", { length: 64 }).notNull().default("main"),
+    shardGeneration: integer("shard_generation").notNull().default(1),
+    estimatedBytesUsed: integer("estimated_bytes_used").notNull().default(0),
+    /** Default 400 MB soft warning limit. */
+    warningThresholdBytes: integer("warning_threshold_bytes")
+      .notNull()
+      .default(419_430_400),
+    /** Default 750 MB hard stop / shard rotation limit. */
+    hardLimitBytes: integer("hard_limit_bytes").notNull().default(786_432_000),
+    totalBatchesPushed: integer("total_batches_pushed").notNull().default(0),
+    totalRecordsArchived: integer("total_records_archived").notNull().default(0),
+    lastCommitSha: varchar("last_commit_sha", { length: 64 }),
+    lastPushAt: timestamp("last_push_at", { withTimezone: true }),
+    lastVerifiedAt: timestamp("last_verified_at", { withTimezone: true }),
+    /** 'HEALTHY' | 'WARNING_STORAGE' | 'ROTATION_REQUIRED' | 'DEGRADED_UNCONFIGURED' | 'ERROR' */
+    healthStatus: varchar("health_status", { length: 32 })
+      .notNull()
+      .default("HEALTHY"),
+    lastError: text("last_error"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    check("archive_repo_shard_positive", sql`${t.shardGeneration} >= 1`),
+    check("archive_repo_bytes_nonnegative", sql`${t.estimatedBytesUsed} >= 0`),
+    check(
+      "archive_repo_thresholds_valid",
+      sql`${t.warningThresholdBytes} >= 1048576 AND ${t.hardLimitBytes} > ${t.warningThresholdBytes}`,
+    ),
+  ]),
+);
 
 export const archiveBatches = pgTable(
   "archive_batches",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     batchNumber: varchar("batch_number", { length: 24 }).notNull().unique(),
-    /** 'transactions_history' | 'settled_market_orders' | 'closed_refunds' | 'old_market_candles' */
+    /** Dataset / category key (e.g. 'transactions_history', 'settled_market_orders', 'closed_refunds', 'old_market_candles', 'settled_contracts', 'repaid_loans', 'settled_invoices', 'completed_marketplace_orders', 'closed_company_sales', 'closed_exchange_purchases', 'audit_logs_history', 'download_all_bundle') */
     datasetKey: varchar("dataset_key", { length: 48 }).notNull(),
-    archiveVersion: varchar("archive_version", { length: 16 }).notNull().default("V4.0"),
-    schemaVersion: varchar("schema_version", { length: 16 }).notNull().default("0008"),
+    archiveVersion: varchar("archive_version", { length: 16 }).notNull().default("V4.1"),
+    schemaVersion: varchar("schema_version", { length: 16 }).notNull().default("0009"),
     cutoffDate: timestamp("cutoff_date", { withTimezone: true }).notNull(),
     periodStart: timestamp("period_start", { withTimezone: true }),
     periodEnd: timestamp("period_end", { withTimezone: true }),
@@ -2399,6 +2471,27 @@ export const archiveBatches = pgTable(
     zipPayloadBase64: text("zip_payload_base64").notNull(),
     byteSize: integer("byte_size").notNull(),
     status: archiveBatchStatusEnum("status").notNull().default("CREATED"),
+    // --- V4.1 GitHub 5-Repository & Resumable State-Machine Columns ----------
+    repoKey: varchar("repo_key", { length: 48 })
+      .notNull()
+      .default("aeros-archive-ledger"),
+    repoName: varchar("repo_name", { length: 120 })
+      .notNull()
+      .default("aeros-archive-ledger"),
+    shardGeneration: integer("shard_generation").notNull().default(1),
+    /** 'SELECTING' | 'BUILDING' | 'UPLOADING' | 'UPLOADED' | 'VERIFYING' | 'VERIFIED' | 'CLEARING' | 'COMPLETED' | 'FAILED_RETRYABLE' | 'DEGRADED_HALTED' */
+    stateMachineStatus: varchar("state_machine_status", { length: 32 })
+      .notNull()
+      .default("COMPLETED"),
+    remoteCommitSha: varchar("remote_commit_sha", { length: 64 }),
+    remoteBatchPath: varchar("remote_batch_path", { length: 240 }),
+    remoteManifestPath: varchar("remote_manifest_path", { length: 240 }),
+    remoteIndexPath: varchar("remote_index_path", { length: 240 }),
+    verifiedRemoteSha256: varchar("verified_remote_sha256", { length: 64 }),
+    retryCount: integer("retry_count").notNull().default(0),
+    lastError: text("last_error"),
+    nextRetryAt: timestamp("next_retry_at", { withTimezone: true }),
+    isDownloadAllBundle: boolean("is_download_all_bundle").notNull().default(false),
     createdByGovId: uuid("created_by_gov_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     downloadedAt: timestamp("downloaded_at", { withTimezone: true }),
@@ -2409,8 +2502,33 @@ export const archiveBatches = pgTable(
   (t) => ([
     check("archive_batch_record_count_nonnegative", sql`${t.recordCount} >= 0`),
     check("archive_batch_byte_size_positive", sql`${t.byteSize} >= 1`),
+    check("archive_batch_retry_nonnegative", sql`${t.retryCount} >= 0`),
     index("archive_batches_dataset_idx").on(t.datasetKey, t.createdAt),
     index("archive_batches_status_idx").on(t.status, t.createdAt),
+    index("archive_batches_repo_idx").on(t.repoKey, t.createdAt),
+    index("archive_batches_sm_status_idx").on(t.stateMachineStatus, t.nextRetryAt),
+  ]),
+);
+
+export const archivedRecordLedger = pgTable(
+  "archived_record_ledger",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    datasetKey: varchar("dataset_key", { length: 48 }).notNull(),
+    recordId: varchar("record_id", { length: 64 }).notNull(),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => archiveBatches.id),
+    repoKey: varchar("repo_key", { length: 48 }).notNull(),
+    remoteBatchPath: varchar("remote_batch_path", { length: 240 }),
+    recordCreatedAt: timestamp("record_created_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }).notNull().defaultNow(),
+    clearedFromNeonAt: timestamp("cleared_from_neon_at", { withTimezone: true }),
+  },
+  (t) => ([
+    uniqueIndex("archived_record_dataset_record_unique").on(t.datasetKey, t.recordId),
+    index("archived_record_batch_idx").on(t.batchId),
+    index("archived_record_repo_idx").on(t.repoKey, t.archivedAt),
   ]),
 );
 
@@ -2456,7 +2574,7 @@ export const accountingCheckpoints = pgTable(
   ]),
 );
 
-// --- V4 ---------------------------------------------------------------------
+// --- V4 & V4.1 --------------------------------------------------------------
 export type ExchangePackagePolicy = typeof exchangePackagePolicies.$inferSelect;
 export type ExchangePurchase = typeof exchangePurchases.$inferSelect;
 export type MarketState = typeof marketState.$inferSelect;
@@ -2464,6 +2582,9 @@ export type MarketCandle = typeof marketCandles.$inferSelect;
 export type MarketPosition = typeof marketPositions.$inferSelect;
 export type MarketOrder = typeof marketOrders.$inferSelect;
 export type RefundRequest = typeof refundRequests.$inferSelect;
+export type ArchiveRepository = typeof archiveRepositories.$inferSelect;
 export type ArchiveBatch = typeof archiveBatches.$inferSelect;
+export type ArchivedRecordLedgerRow = typeof archivedRecordLedger.$inferSelect;
 export type AccountingCheckpoint = typeof accountingCheckpoints.$inferSelect;
+
 

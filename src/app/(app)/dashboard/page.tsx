@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { getActingContext } from "@/lib/auth";
 import {
+  getGovernmentSingleton,
   getOpenIssuanceRequestsForUser,
   getTransactionsForWallet,
 } from "@/lib/queries";
 import { getInvoicesForBuyer } from "@/lib/invoices";
 import { getPendingOffersForOwner } from "@/lib/sales";
 import { getOutstandingInstalmentsForOwner } from "@/lib/queries";
+import { getMarketChartData, getUserMarketPortfolio } from "@/lib/synthetic-market";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { TransactionRow } from "@/components/transaction-row";
 import { StatusBadge } from "@/components/status-badge";
@@ -29,34 +31,39 @@ export default async function DashboardPage() {
     await runLoanMaintenance().catch(() => undefined);
   }
 
-  // The promotion slot's lazy daily charge. This app has no scheduler yet, so
-  // the charge runs when a page renders the ad. It is idempotent per IST
-  // calendar day (one conditional UPDATE claims the day), it never throws for
-  // an expected outcome, and it is a single indexed read when there is no
-  // campaign at all — so putting it on the busiest page is safe and cheap.
+  // The promotion slot's lazy daily charge.
   await runPromotionCharges().catch(() => undefined);
 
-  const [recentTx, openIssuances, pendingInvoices, pendingOffers, dueInstalments, ad] =
-    await Promise.all([
-      getTransactionsForWallet(
-        company ? company.id : user.id,
-        company ? "COMPANY" : "USER",
-        5,
-      ),
-      getOpenIssuanceRequestsForUser(user.id),
-      getInvoicesForBuyer(user.id, 20),
-      getPendingOffersForOwner(user.id),
-      getOutstandingInstalmentsForOwner(user.id),
-      getLiveAd(),
-    ]);
+  const [
+    recentTx,
+    openIssuances,
+    pendingInvoices,
+    pendingOffers,
+    dueInstalments,
+    ad,
+    gov,
+    marketChart,
+    marketPortfolio,
+  ] = await Promise.all([
+    getTransactionsForWallet(
+      company ? company.id : user.id,
+      company ? "COMPANY" : "USER",
+      5,
+    ),
+    getOpenIssuanceRequestsForUser(user.id),
+    getInvoicesForBuyer(user.id, 20),
+    getPendingOffersForOwner(user.id),
+    getOutstandingInstalmentsForOwner(user.id),
+    getLiveAd(),
+    getGovernmentSingleton(),
+    getMarketChartData("15m", 16).catch(() => null),
+    getUserMarketPortfolio(user.id).catch(() => null),
+  ]);
 
   const pendingVotes = openIssuances.filter((row) => !row.myVote);
   const unpaidInvoices = pendingInvoices.filter((r) => r.invoice.status === "PENDING");
   const overdue = dueInstalments.filter((r) => r.instalment.status === "OVERDUE");
 
-  // The offline shell's snapshot of "recent activity" — deliberately just
-  // the handful of fields the offline dashboard actually renders, not the
-  // full `Transaction` row (see src/components/offline/dashboard-offline-sync.tsx).
   const viewerId = company ? company.id : user.id;
   const offlineRecentActivity = recentTx.map((tx) => {
     const outgoing = tx.senderType !== "GOVERNMENT" && tx.senderId === viewerId;
@@ -71,6 +78,13 @@ export default async function DashboardPage() {
       createdAt: tx.createdAt.toISOString(),
     };
   });
+
+  const hasMadeTransfer =
+    recentTx.length > 0 || user.archivedCredits > 0 || user.archivedDebits > 0;
+  const hasMarketActivity =
+    (marketPortfolio?.position.totalBoughtUnits ?? 0) > 0 ||
+    (marketPortfolio?.position.totalShortedUnits ?? 0) > 0;
+  const hasCompanyActivity = ctx.availableCompanies.length > 0;
 
   return (
     <div className="space-y-6">
@@ -101,6 +115,98 @@ export default async function DashboardPage() {
         activeCompanyId={company?.id ?? null}
         personalLabel={user.displayName}
       />
+
+      {/* Economy Hub Live Pulse */}
+      {marketChart && gov && (
+        <section className="card p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-medium">Aeros Economy Hub</h2>
+              <p className="text-xs text-muted">
+                Live synthetic market index &amp; sovereign economy metrics
+              </p>
+            </div>
+            <Link href="/aeros-market" className="btn btn-secondary text-xs">
+              Open Trading Terminal &rarr;
+            </Link>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-md bg-surface p-2.5">
+              <p className="text-[11px] text-muted">AMI Index Price</p>
+              <p className="mt-0.5 font-mono text-sm font-semibold">
+                {marketChart.state.currentPrice.toLocaleString()} {CURRENCY_NAME}{" "}
+                <span className="text-[11px] font-normal text-muted">
+                  ({marketChart.stats24h.changePercent})
+                </span>
+              </p>
+            </div>
+            <div className="rounded-md bg-surface p-2.5">
+              <p className="text-[11px] text-muted">Your Market Position</p>
+              <p className="mt-0.5 font-mono text-sm font-semibold">
+                Long {marketPortfolio?.position.unitsHeld ?? 0} · Short{" "}
+                {marketPortfolio?.position.shortUnitsHeld ?? 0}
+              </p>
+            </div>
+            <div className="rounded-md bg-surface p-2.5">
+              <p className="text-[11px] text-muted">Economy Total Supply</p>
+              <p className="mt-0.5 font-mono text-sm font-semibold">
+                {gov.totalSupply.toLocaleString()} {CURRENCY_NAME}
+              </p>
+            </div>
+            <div className="rounded-md bg-surface p-2.5">
+              <p className="text-[11px] text-muted">Default Tax Rate</p>
+              <p className="mt-0.5 font-mono text-sm font-semibold">
+                {(gov.taxRateBp / 100).toFixed(2)}%
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Onboarding Checklist for Newer Citizens */}
+      {(!hasMadeTransfer || !hasMarketActivity || !hasCompanyActivity) && (
+        <section className="card p-4">
+          <h2 className="text-sm font-medium">Citizen Economy Checklist</h2>
+          <p className="mt-0.5 text-xs text-muted">
+            Explore the core pillars of the Aeros Pay virtual economy:
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3 text-xs">
+            <Link
+              href="/pay"
+              className={`rounded-md border p-2.5 ${
+                hasMadeTransfer
+                  ? "border-border bg-surface text-muted"
+                  : "border-[#111111] font-medium"
+              }`}
+            >
+              <span>{hasMadeTransfer ? "✓ " : "1. "}</span>
+              Send or receive a wallet payment
+            </Link>
+            <Link
+              href="/aeros-market"
+              className={`rounded-md border p-2.5 ${
+                hasMarketActivity
+                  ? "border-border bg-surface text-muted"
+                  : "border-[#111111] font-medium"
+              }`}
+            >
+              <span>{hasMarketActivity ? "✓ " : "2. "}</span>
+              Trade Long or Short on the AMI Index
+            </Link>
+            <Link
+              href="/companies"
+              className={`rounded-md border p-2.5 ${
+                hasCompanyActivity
+                  ? "border-border bg-surface text-muted"
+                  : "border-[#111111] font-medium"
+              }`}
+            >
+              <span>{hasCompanyActivity ? "✓ " : "3. "}</span>
+              Launch or explore a registered Company
+            </Link>
+          </div>
+        </section>
+      )}
 
       {/* Things that need the person's attention, in priority order. */}
       {overdue.length > 0 && (
@@ -147,8 +253,6 @@ export default async function DashboardPage() {
         <QuickAction href="/pay" label="Pay" />
         <QuickAction href="/exchange" label="Aeros Exchange" />
         <QuickAction href="/aeros-market" label="Aeros Market" />
-        {/* The Market has no slot in the five-item mobile tab bar, so this is
-            how a phone reaches it. */}
         <QuickAction href="/market" label="Goods Market" />
         <QuickAction href="/market/orders" label="My Orders" />
         <QuickAction href="/refunds" label="Refund Center" />
@@ -156,8 +260,6 @@ export default async function DashboardPage() {
         <QuickAction href="/transactions" label="Activity" />
       </section>
 
-      {/* The single promotion slot. Rendering it records nothing, and the X is
-          per-render client state — see src/components/promotion-slot.tsx. */}
       <PromotionSlot ad={ad} />
 
       <section className="card p-5">

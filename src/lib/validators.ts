@@ -48,6 +48,7 @@ import {
   RATING_MAX_STARS,
   RATING_MIN_STARS,
   ARCHIVE_CLEAR_CONFIRM_PHRASE,
+  ARCHIVE_DATASET_KEYS,
 } from "./constants";
 
 // Normalizes user-typed usernames to their canonical lowercase form before
@@ -991,6 +992,19 @@ export const marketConfigSchema = z
     maxStepChangeBp: z.coerce.number().int().min(25, "Min 0.25% (25 bp).").max(3000, "Max 30.00% (3000 bp)."),
     maxOrderUnits: z.coerce.number().int().min(1, "Min 1 unit.").max(100_000, "Max 100,000 units."),
     userCooldownSeconds: z.coerce.number().int().min(0, "Min 0 seconds.").max(3600, "Max 3600 seconds."),
+    shortSellingEnabled: formFlagSchema.optional(),
+    shortCollateralRatioBp: z.coerce
+      .number()
+      .int()
+      .min(10000, "Short collateral must be at least 100% (10000 bp).")
+      .max(20000, "Short collateral cannot exceed 200% (20000 bp).")
+      .default(10000),
+    maxShortUnitsPerUser: z.coerce
+      .number()
+      .int()
+      .min(1, "Min 1 unit.")
+      .max(100_000, "Max 100,000 units.")
+      .default(1000),
   })
   .refine((d) => d.maxPrice > d.minPrice, {
     message: "Maximum price must be strictly greater than minimum price.",
@@ -998,7 +1012,7 @@ export const marketConfigSchema = z
   });
 
 export const placeMarketOrderSchema = z.object({
-  side: z.enum(["BUY", "SELL"]),
+  side: z.enum(["BUY", "SELL", "SHORT", "COVER"]),
   quantity: z.coerce
     .number()
     .int("Quantity must be a whole number of units.")
@@ -1060,17 +1074,15 @@ export const v4RetentionSettingsSchema = z.object({
 });
 
 export const createArchiveBatchSchema = z.object({
-  datasetKey: z.enum([
-    "transactions_history",
-    "settled_market_orders",
-    "closed_refunds",
-    "old_market_candles",
-  ]),
+  datasetKey: z.enum(ARCHIVE_DATASET_KEYS),
   olderThanDays: z.coerce
     .number()
     .int("Must be a whole number of days.")
     .min(0, "Days cannot be negative.")
     .max(3650, "Days cannot exceed 3650."),
+  dateFrom: z.string().trim().optional().or(z.literal("")),
+  dateTo: z.string().trim().optional().or(z.literal("")),
+  pushToGithub: formFlagSchema.optional(),
 });
 
 export const verifyArchiveBatchSchema = z.object({
@@ -1089,4 +1101,17 @@ export const clearArchiveBatchSchema = z.object({
       `Type the exact confirmation phrase: ${ARCHIVE_CLEAR_CONFIRM_PHRASE}`,
     ),
 });
+
+export const downloadAllArchivesSchema = z.object({
+  olderThanDays: z.coerce
+    .number()
+    .int("Must be a whole number of days.")
+    .min(0, "Days cannot be negative.")
+    .max(3650, "Days cannot exceed 3650.")
+    .default(0),
+  dateFrom: z.string().trim().optional().or(z.literal("")),
+  dateTo: z.string().trim().optional().or(z.literal("")),
+});
+
+
 

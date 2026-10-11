@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "4.1.0",
+  "repository": "aeros-archive-economy",
+  "shardGeneration": 1,
+  "datasets": [
+    "completed_marketplace_orders",
+    "settled_company_sales"
+  ],
+  "initializedAt": "2026-04-20T00:00:00.000Z"
+}

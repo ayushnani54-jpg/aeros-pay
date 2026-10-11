@@ -16,7 +16,7 @@ export default async function AerosMarketPage() {
   const { user } = ctx;
   const [flags, chart15m, portfolio] = await Promise.all([
     getGovernmentFeatureFlags(),
-    getMarketChartData("15m", 48),
+    getMarketChartData("15m", 96),
     getUserMarketPortfolio(user.id),
   ]);
 
@@ -40,7 +40,8 @@ export default async function AerosMarketPage() {
             Aeros Market &amp; Synthetic Index
           </h1>
           <p className="mt-1 text-sm text-muted">
-            Internal deterministic whole-number synthetic index (AMI) and Treasury-settled trading.
+            Internal deterministic whole-number synthetic index (AMI) with Long &amp; Short
+            Treasury-settled trading.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -58,7 +59,8 @@ export default async function AerosMarketPage() {
           <h2 className="font-medium">Aeros Market is currently offline</h2>
           <p className="mt-1 text-sm text-muted">
             The Government has temporarily disabled the synthetic market view. Your existing
-            index holdings ({portfolio.position.unitsHeld.toLocaleString()} units) and wallet
+            index holdings ({portfolio.position.unitsHeld.toLocaleString()} long units,{" "}
+            {portfolio.position.shortUnitsHeld.toLocaleString()} short units) and wallet
             balances remain intact.
           </p>
         </section>
@@ -71,6 +73,9 @@ export default async function AerosMarketPage() {
           minPrice={chart15m.state.minPrice}
           maxPrice={chart15m.state.maxPrice}
           maxOrderUnits={chart15m.state.maxOrderUnits}
+          shortSellingEnabled={chart15m.state.shortSellingEnabled}
+          shortCollateralRatioBp={chart15m.state.shortCollateralRatioBp}
+          maxShortUnitsPerUser={chart15m.state.maxShortUnitsPerUser}
           tradingEnabled={flags.tradingEnabled}
           userBalance={user.balance}
           portfolio={{
@@ -80,9 +85,18 @@ export default async function AerosMarketPage() {
             averageEntryPrice: portfolio.averageEntryPrice,
             marketValueAeros: portfolio.marketValueAeros,
             unrealizedPnlAeros: portfolio.unrealizedPnlAeros,
+            shortUnitsHeld: portfolio.position.shortUnitsHeld,
+            shortEntryNotional: portfolio.position.shortEntryNotional,
+            shortCollateralLocked: portfolio.position.shortCollateralLocked,
+            shortAverageEntryPrice: portfolio.shortAverageEntryPrice,
+            shortLiabilityAeros: portfolio.shortLiabilityAeros,
+            shortUnrealizedPnlAeros: portfolio.shortUnrealizedPnlAeros,
+            shortNetEquityAeros: portfolio.shortNetEquityAeros,
+            totalUnrealizedPnlAeros: portfolio.totalUnrealizedPnlAeros,
           }}
           stats24h={chart15m.stats24h}
           initialCandles={serializedCandles}
+          initialHasOlderHistory={chart15m.hasOlderHistory}
         />
       )}
 
@@ -93,26 +107,27 @@ export default async function AerosMarketPage() {
         </p>
         <div className="mt-3 grid gap-3 text-xs sm:grid-cols-3">
           <div className="rounded-md bg-surface p-3">
-            <p className="font-semibold">Whole-Number Pricing</p>
+            <p className="font-semibold">Whole-Number Pricing &amp; Zoom</p>
             <p className="mt-1 text-muted">
-              Every candle (Open, High, Low, Close) and every execution price is an exact whole
-              number of {CURRENCY_NAME} bounded between{" "}
-              {chart15m.state.minPrice.toLocaleString()} and{" "}
-              {chart15m.state.maxPrice.toLocaleString()} {CURRENCY_NAME}.
+              Every candle (Open, High, Low, Close) and execution price is an exact whole number of{" "}
+              {CURRENCY_NAME} bounded between {chart15m.state.minPrice.toLocaleString()} and{" "}
+              {chart15m.state.maxPrice.toLocaleString()} {CURRENCY_NAME}. Zoom in/out or pan
+              horizontally to inspect historical candles.
             </p>
           </div>
           <div className="rounded-md bg-surface p-3">
-            <p className="font-semibold">Economic Meaning of BUY &amp; SELL</p>
+            <p className="font-semibold">Long (BUY / SELL) &amp; Short (SHORT / COVER)</p>
             <p className="mt-1 text-muted">
-              <strong>BUY</strong> debits your personal wallet and credits the Government Treasury,
-              minting AMI index units into your position. <strong>SELL</strong> surrenders your AMI
-              units and transfers {CURRENCY_NAME} from the Treasury back to your wallet.
+              <strong>BUY</strong> acquires long AMI units. <strong>SELL</strong> closes long units
+              (or opens a short position if you hold 0 long units). <strong>SHORT</strong> opens a
+              100% collateralized short position without owning units; <strong>COVER</strong> closes
+              it and settles collateral +/- P&amp;L.
             </p>
           </div>
           <div className="rounded-md bg-surface p-3">
             <p className="font-semibold">Read-Only Chart Refresh</p>
             <p className="mt-1 text-muted">
-              Refreshing this page or switching between 5m, 15m, and 1h views is strictly
+              Refreshing this page, zooming, or switching between 5m, 15m, and 1h views is strictly
               read-only and never moves the price or fabricates trading volume.
             </p>
           </div>
@@ -139,7 +154,11 @@ export default async function AerosMarketPage() {
                       className={`rounded px-2 py-0.5 text-xs font-semibold ${
                         ord.side === "BUY"
                           ? "bg-[#e8f5ee] text-success"
-                          : "bg-[#fdecea] text-danger"
+                          : ord.side === "SHORT"
+                            ? "bg-[#fff6e0] text-[#8a5a00]"
+                            : ord.side === "COVER"
+                              ? "bg-surface text-foreground"
+                              : "bg-[#fdecea] text-danger"
                       }`}
                     >
                       {ord.side}
@@ -152,7 +171,7 @@ export default async function AerosMarketPage() {
                   <p className="mt-0.5 text-xs text-muted">
                     {formatDateTime(ord.createdAt)}
                     {ord.txRef ? ` · Ledger ref ${ord.txRef}` : ""}
-                    {ord.side === "SELL" && (
+                    {(ord.side === "SELL" || ord.side === "COVER") && (
                       <>
                         {" "}
                         · Realized P/L:{" "}
@@ -166,10 +185,16 @@ export default async function AerosMarketPage() {
                         </span>
                       </>
                     )}
+                    {ord.side === "SHORT" && (
+                      <>
+                        {" "}
+                        · Collateral locked: {ord.costBasisDelta.toLocaleString()} {CURRENCY_NAME}
+                      </>
+                    )}
                   </p>
                 </div>
                 <div className="text-right font-semibold">
-                  {ord.side === "BUY" ? "-" : "+"}
+                  {ord.side === "BUY" || ord.side === "SHORT" ? "-" : "+"}
                   {ord.totalAeros.toLocaleString()} {CURRENCY_NAME}
                 </div>
               </div>

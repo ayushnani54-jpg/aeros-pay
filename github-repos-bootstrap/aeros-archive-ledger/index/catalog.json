@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "4.1.0",
+  "repository": "aeros-archive-ledger",
+  "shardGeneration": 1,
+  "datasets": [
+    "transactions_history",
+    "exchange_purchases",
+    "closed_refunds"
+  ],
+  "initializedAt": "2026-04-20T00:00:00.000Z"
+}

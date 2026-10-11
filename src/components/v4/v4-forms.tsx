@@ -5,10 +5,13 @@ import {
   cancelMyExchangePurchaseAction,
   clearArchiveBatchAction,
   createArchiveBatchAction,
+  createDownloadAllArchiveBundleAction,
   createRefundRequestAction,
   govDecideRefundAction,
   requestExchangePurchaseAction,
+  retryFailedArchiveBatchAction,
   reviewExchangePurchaseAction,
+  run24HourGithubArchivalAction,
   syncMarketClockAction,
   updateMarketConfigAction,
   updateV4FeatureTogglesAction,
@@ -552,6 +555,9 @@ export function GovMarketConfigForm({
     maxStepChangeBp: number;
     maxOrderUnits: number;
     userCooldownSeconds: number;
+    shortSellingEnabled?: boolean;
+    shortCollateralRatioBp?: number;
+    maxShortUnitsPerUser?: number;
   };
 }) {
   const [state, action, pending] = useActionState(updateMarketConfigAction, null);
@@ -648,6 +654,44 @@ export function GovMarketConfigForm({
               required
               className="input font-mono"
             />
+          </div>
+        </div>
+
+        <div className="grid gap-3 border-t border-border pt-3 sm:grid-cols-3">
+          <div>
+            <label className="label">Short Collateral Ratio (bp, 10000 = 100%)</label>
+            <input
+              name="shortCollateralRatioBp"
+              type="number"
+              min={10000}
+              max={20000}
+              defaultValue={config.shortCollateralRatioBp ?? 10000}
+              required
+              className="input font-mono"
+            />
+          </div>
+          <div>
+            <label className="label">Max Short Exposure / User (units)</label>
+            <input
+              name="maxShortUnitsPerUser"
+              type="number"
+              min={1}
+              max={100000}
+              defaultValue={config.maxShortUnitsPerUser ?? 1000}
+              required
+              className="input font-mono"
+            />
+          </div>
+          <div className="flex items-end pb-2">
+            <label className="flex items-center gap-2 text-xs font-medium">
+              <input
+                type="checkbox"
+                name="shortSellingEnabled"
+                value="true"
+                defaultChecked={config.shortSellingEnabled ?? true}
+              />
+              <span>Enable Collateralized Short Selling (SHORT / COVER)</span>
+            </label>
           </div>
         </div>
 
@@ -870,35 +914,76 @@ export function CreateArchiveBatchForm() {
 
   return (
     <form action={action} className="space-y-3 text-sm">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="label">Dataset to Archive into Verified ZIP</label>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="sm:col-span-2">
+          <label className="label">Dataset to Archive into Verified ZIP &amp; GitHub Repo</label>
           <select name="datasetKey" className="input">
-            <option value="transactions_history">
-              Operational Transaction History (Category C — Preserves Balances &amp; Checkpoints)
-            </option>
-            <option value="settled_market_orders">
-              Settled Synthetic Market Orders
-            </option>
-            <option value="closed_refunds">
-              Completed / Rejected Refund Requests
-            </option>
-            <option value="old_market_candles">
-              Historical Synthetic Market Candles (&gt;48h old)
-            </option>
+            <optgroup label="aeros-archive-ledger">
+              <option value="transactions_history">
+                Operational Transaction History (Category C — Preserves Balances &amp; Checkpoints)
+              </option>
+              <option value="closed_exchange_purchases">
+                Settled / Cancelled Exchange Package Purchases
+              </option>
+              <option value="closed_refunds">
+                Completed / Rejected Refund Requests
+              </option>
+            </optgroup>
+            <optgroup label="aeros-archive-contracts">
+              <option value="settled_invoices">
+                Paid / Cancelled / Expired Invoices
+              </option>
+              <option value="settled_contracts">
+                Completed / Cancelled Contracts
+              </option>
+              <option value="repaid_loans">
+                Repaid / Defaulted / Rejected Loans
+              </option>
+            </optgroup>
+            <optgroup label="aeros-archive-market">
+              <option value="settled_market_orders">
+                Settled Synthetic Market Orders (BUY / SELL / SHORT / COVER)
+              </option>
+              <option value="old_market_candles">
+                Historical Synthetic Market Candles (&gt;48h old)
+              </option>
+            </optgroup>
+            <optgroup label="aeros-archive-economy">
+              <option value="completed_marketplace_orders">
+                Completed Marketplace Purchase Orders
+              </option>
+              <option value="closed_company_sales">
+                Settled / Cancelled / Rejected Company Sales
+              </option>
+            </optgroup>
+            <optgroup label="aeros-archive-audit">
+              <option value="audit_logs_history">
+                Historical Government Audit Logs
+              </option>
+            </optgroup>
           </select>
         </div>
         <div>
-          <label className="label">Include records older than (days)</label>
+          <label className="label">Older than (days)</label>
           <input
             name="olderThanDays"
             type="number"
             min={0}
             max={3650}
-            defaultValue={30}
+            defaultValue={1}
             required
             className="input font-mono"
           />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="label text-xs">From Date (opt)</label>
+            <input name="dateFrom" type="date" className="input text-xs" />
+          </div>
+          <div>
+            <label className="label text-xs">To Date (opt)</label>
+            <input name="dateTo" type="date" className="input text-xs" />
+          </div>
         </div>
       </div>
 
@@ -906,7 +991,8 @@ export function CreateArchiveBatchForm() {
       {state && state.ok && (
         <p className="text-xs text-success">
           Created archive batch {state.data.batchNumber} ({state.data.recordCount} records).
-          Verification token: <span className="font-mono font-semibold">{state.data.verificationToken}</span>.
+          Verification token:{" "}
+          <span className="font-mono font-semibold">{state.data.verificationToken}</span>.
           Download the ZIP below and verify it before clearing.
         </p>
       )}
@@ -914,6 +1000,104 @@ export function CreateArchiveBatchForm() {
       <button type="submit" disabled={pending} className="btn btn-primary">
         {pending ? "Building ZIP archive…" : "Generate verified ZIP archive batch"}
       </button>
+    </form>
+  );
+}
+
+export function Run24HourGithubArchivalButton() {
+  const [state, action, pending] = useActionState(run24HourGithubArchivalAction, null);
+
+  return (
+    <form action={action} className="space-y-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="submit" disabled={pending} className="btn btn-primary text-xs">
+          {pending
+            ? "Archiving >=24h records to 5 GitHub repos…"
+            : "Run 24-Hour Automated GitHub Archival Cycle Now"}
+        </button>
+        <span className="text-xs text-muted">
+          Selects records &ge;24h old across all 11 datasets, uploads to the 5 GitHub repos,
+          verifies remote SHA-256 checksums, and safely clears verified rows from Neon.
+        </span>
+      </div>
+      {state && !state.ok && <p className="text-xs text-danger">{state.error}</p>}
+      {state && state.ok && (
+        <p className="text-xs text-success">
+          24h GitHub archival cycle finished: {state.data.batchesCount} batch(es) archived,{" "}
+          {state.data.retriedCount} retried ({state.data.errorsCount} errors).
+        </p>
+      )}
+    </form>
+  );
+}
+
+export function DownloadAllArchiveBundleForm() {
+  const [state, action, pending] = useActionState(createDownloadAllArchiveBundleAction, null);
+
+  return (
+    <form action={action} className="space-y-3 text-sm">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div>
+          <label className="label text-xs">Include records older than (days, 0 = all)</label>
+          <input
+            name="olderThanDays"
+            type="number"
+            min={0}
+            max={3650}
+            defaultValue={0}
+            className="input font-mono text-xs"
+          />
+        </div>
+        <div>
+          <label className="label text-xs">Date From (optional)</label>
+          <input name="dateFrom" type="date" className="input text-xs" />
+        </div>
+        <div>
+          <label className="label text-xs">Date To (optional)</label>
+          <input name="dateTo" type="date" className="input text-xs" />
+        </div>
+      </div>
+
+      {state && !state.ok && <p className="text-xs text-danger">{state.error}</p>}
+      {state && state.ok && (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface p-3 text-xs">
+          <span className="text-success">
+            Unified multi-category bundle <strong>{state.data.batchNumber}</strong> ready (
+            {state.data.recordCount.toLocaleString()} total records across all categories).
+          </span>
+          <a
+            href={`/api/gov/archive/${state.data.batchId}`}
+            className="btn btn-primary text-xs"
+          >
+            Download Unified .zip Bundle
+          </a>
+        </div>
+      )}
+
+      <button type="submit" disabled={pending} className="btn btn-secondary text-xs">
+        {pending
+          ? "Packaging all 11 datasets into unified .zip…"
+          : "Download All Categories (.zip Bundle with Manifest & Checksums)"}
+      </button>
+    </form>
+  );
+}
+
+export function RetryFailedArchiveBatchButton({ batchId }: { batchId: string }) {
+  const [state, action, pending] = useActionState(retryFailedArchiveBatchAction, null);
+
+  return (
+    <form action={action} className="mt-2 inline-flex flex-wrap items-center gap-2">
+      <input type="hidden" name="batchId" value={batchId} />
+      <button type="submit" disabled={pending} className="btn btn-secondary text-xs">
+        {pending ? "Retrying GitHub upload & verify…" : "Retry GitHub Upload & Verify"}
+      </button>
+      {state && !state.ok && <span className="text-xs text-danger">{state.error}</span>}
+      {state && state.ok && (
+        <span className="text-xs text-success">
+          Recovered &amp; remote SHA-256 verified.
+        </span>
+      )}
     </form>
   );
 }

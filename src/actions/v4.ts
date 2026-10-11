@@ -28,6 +28,9 @@ import {
   ArchiveError,
   clearArchiveBatch,
   createArchiveBatch,
+  createDownloadAllArchiveBundle,
+  retryFailedGithubArchiveBatch,
+  run24HourGithubArchivalCycle,
   verifyArchiveBatch,
 } from "@/lib/archive";
 import {
@@ -405,6 +408,9 @@ export async function updateMarketConfigAction(
     maxStepChangeBp: formData.get("maxStepChangeBp"),
     maxOrderUnits: formData.get("maxOrderUnits"),
     userCooldownSeconds: formData.get("userCooldownSeconds"),
+    shortSellingEnabled: formData.get("shortSellingEnabled"),
+    shortCollateralRatioBp: formData.get("shortCollateralRatioBp") ?? "10000",
+    maxShortUnitsPerUser: formData.get("maxShortUnitsPerUser") ?? "1000",
   });
 
   if (!parsed.success) {
@@ -635,6 +641,7 @@ export async function createArchiveBatchAction(
     batchNumber: string;
     recordCount: number;
     verificationToken: string;
+    stateMachineStatus: string;
   }>
 > {
   let g;
@@ -647,10 +654,25 @@ export async function createArchiveBatchAction(
   const parsed = createArchiveBatchSchema.safeParse({
     datasetKey: formData.get("datasetKey"),
     olderThanDays: formData.get("olderThanDays"),
+    dateFrom: formData.get("dateFrom") ?? "",
+    dateTo: formData.get("dateTo") ?? "",
+    pushToGithub: formData.get("pushToGithub") ?? "true",
   });
 
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid archive parameters." };
+  }
+
+  let dateFrom: Date | null = null;
+  if (parsed.data.dateFrom) {
+    const d = new Date(`${parsed.data.dateFrom}T00:00:00Z`);
+    if (!Number.isNaN(d.getTime())) dateFrom = d;
+  }
+
+  let dateTo: Date | null = null;
+  if (parsed.data.dateTo) {
+    const d = new Date(`${parsed.data.dateTo}T23:59:59Z`);
+    if (!Number.isNaN(d.getTime())) dateTo = d;
   }
 
   try {
@@ -659,6 +681,9 @@ export async function createArchiveBatchAction(
       govUsername: g.username,
       datasetKey: parsed.data.datasetKey,
       olderThanDays: parsed.data.olderThanDays,
+      dateFrom,
+      dateTo,
+      pushToGithub: parsed.data.pushToGithub !== false,
     });
 
     revalidatePath("/gov/archive");
@@ -669,10 +694,115 @@ export async function createArchiveBatchAction(
         batchNumber: batch.batchNumber,
         recordCount: batch.recordCount,
         verificationToken: batch.verificationToken,
+        stateMachineStatus: batch.stateMachineStatus,
       },
     };
   } catch (e) {
     return { ok: false, error: v4ErrMsg(e, "Could not create archive batch.") };
+  }
+}
+
+export async function createDownloadAllArchiveBundleAction(
+  _prev: unknown,
+  formData: FormData,
+): Promise<
+  ActionResult<{
+    batchId: string;
+    batchNumber: string;
+    recordCount: number;
+  }>
+> {
+  let g;
+  try {
+    g = await requireGovernment();
+  } catch {
+    return { ok: false, error: "Government authorization required." };
+  }
+
+  const rawDays = Number(formData.get("olderThanDays") ?? "0");
+  const olderThanDays = Number.isInteger(rawDays) && rawDays >= 0 ? rawDays : 0;
+
+  try {
+    const bundle = await createDownloadAllArchiveBundle({
+      govId: g.id,
+      govUsername: g.username,
+      olderThanDays,
+    });
+
+    revalidatePath("/gov/archive");
+    return {
+      ok: true,
+      data: {
+        batchId: bundle.id,
+        batchNumber: bundle.batchNumber,
+        recordCount: bundle.recordCount,
+      },
+    };
+  } catch (e) {
+    return { ok: false, error: v4ErrMsg(e, "Could not generate Download All bundle.") };
+  }
+}
+
+export async function run24HourGithubArchivalAction(): Promise<
+  ActionResult<{
+    batchesCount: number;
+    retriedCount: number;
+    errorsCount: number;
+  }>
+> {
+  try {
+    await requireGovernment();
+  } catch {
+    return { ok: false, error: "Government authorization required." };
+  }
+
+  try {
+    const res = await run24HourGithubArchivalCycle({
+      olderThanHours: 24,
+      autoClearPrunable: true,
+    });
+
+    revalidatePath("/gov/archive");
+    revalidatePath("/gov/retention");
+    revalidatePath("/gov/health");
+    return {
+      ok: true,
+      data: {
+        batchesCount: res.archivedBatches.length,
+        retriedCount: res.retriedCount,
+        errorsCount: res.errors.length,
+      },
+    };
+  } catch (e) {
+    return { ok: false, error: v4ErrMsg(e, "Could not run 24-hour GitHub archival cycle.") };
+  }
+}
+
+export async function retryFailedArchiveBatchAction(
+  _prev: unknown,
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    await requireGovernment();
+  } catch {
+    return { ok: false, error: "Government authorization required." };
+  }
+
+  const batchId = String(formData.get("batchId") ?? "").trim();
+  if (!batchId) return { ok: false, error: "Batch ID is required." };
+
+  try {
+    const updated = await retryFailedGithubArchiveBatch(batchId);
+    revalidatePath("/gov/archive");
+    if (updated.stateMachineStatus !== "VERIFIED") {
+      return {
+        ok: false,
+        error: updated.lastError ?? "GitHub retry did not complete verification.",
+      };
+    }
+    return { ok: true, data: undefined };
+  } catch (e) {
+    return { ok: false, error: v4ErrMsg(e, "Could not retry GitHub upload.") };
   }
 }
 

@@ -35,10 +35,19 @@ export async function GET(req: Request) {
     ? (rawTf as MarketTimeframe)
     : DEFAULT_MARKET_TIMEFRAME;
 
-  const rawLimit = Number(url.searchParams.get("limit") ?? "48");
-  const limit = Number.isInteger(rawLimit) ? Math.max(12, Math.min(96, rawLimit)) : 48;
+  const rawLimit = Number(url.searchParams.get("limit") ?? "96");
+  const limit = Number.isInteger(rawLimit) ? Math.max(12, Math.min(500, rawLimit)) : 96;
 
-  const chart = await getMarketChartData(timeframe, limit);
+  const rawBefore = url.searchParams.get("before");
+  let beforeDate: Date | null = null;
+  if (rawBefore) {
+    const parsed = new Date(rawBefore);
+    if (!Number.isNaN(parsed.getTime())) {
+      beforeDate = parsed;
+    }
+  }
+
+  const chart = await getMarketChartData(timeframe, limit, beforeDate);
 
   return NextResponse.json(
     {
@@ -48,6 +57,7 @@ export async function GET(req: Request) {
       previousPrice: chart.state.previousPrice,
       minPrice: chart.state.minPrice,
       maxPrice: chart.state.maxPrice,
+      hasOlderHistory: chart.hasOlderHistory,
       stats24h: chart.stats24h,
       candles: chart.candles.map((c) => ({
         bucketStart: c.bucketStart.toISOString(),

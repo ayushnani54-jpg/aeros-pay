@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AerosPayGithubArchiveBatchManifestV4.1",
+  "version": "4.1.0",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "application",
+    "batchNumber",
+    "datasetKey",
+    "repoKey",
+    "repoName",
+    "shardGeneration",
+    "recordCount",
+    "sha256Jsonl",
+    "verificationToken",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "4.1.0"
+    },
+    "application": {
+      "type": "string",
+      "const": "Aeros Pay"
+    },
+    "batchNumber": {
+      "type": "string"
+    },
+    "datasetKey": {
+      "type": "string"
+    },
+    "repoKey": {
+      "type": "string"
+    },
+    "repoName": {
+      "type": "string"
+    },
+    "shardGeneration": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "recordCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sha256Jsonl": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "verificationToken": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
