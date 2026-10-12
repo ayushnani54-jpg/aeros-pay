@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "V5.0",
+  "repoKey": "aeros-archive-jobs",
+  "title": "Jobs & Employment Archive",
+  "datasets": [
+    "completed_jobs"
+  ],
+  "warningThresholdBytes": 838860800,
+  "hardLimitBytes": 943718400
+}

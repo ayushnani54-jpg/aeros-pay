@@ -1,0 +1,10 @@
+{
+  "repoKey": "aeros-archive-company-partnerships",
+  "title": "Company Partnerships Archive",
+  "schemaVersion": "V5.0",
+  "datasets": [
+    "settled_partnerships"
+  ],
+  "activeGeneration": 1,
+  "operatingThresholdMb": 900
+}

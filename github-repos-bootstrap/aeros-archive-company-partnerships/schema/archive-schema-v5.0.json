@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "V5.0",
+  "repoKey": "aeros-archive-company-partnerships",
+  "title": "Company Partnerships Archive",
+  "datasets": [
+    "settled_partnerships"
+  ],
+  "warningThresholdBytes": 838860800,
+  "hardLimitBytes": 943718400
+}

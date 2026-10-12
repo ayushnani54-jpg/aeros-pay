@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "V4.1",
+  "repoKey": "aeros-archive-trading-ledger",
+  "datasets": [
+    "settled_market_orders"
+  ]
+}

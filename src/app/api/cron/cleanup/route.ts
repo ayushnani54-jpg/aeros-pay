@@ -4,7 +4,8 @@ import { expireOverdueInvoices } from "@/lib/invoices";
 import { expireOverdueOrders } from "@/lib/marketplace";
 import { expireOverdueWantedRequests } from "@/lib/wanted";
 import { expireOverdueContracts } from "@/lib/contracts";
-import { run24HourGithubArchivalCycle } from "@/lib/archive";
+import { cleanupExpiredMediaPosts } from "@/lib/media";
+import { run24HourGithubArchivalCycle, startOrResumeV5ArchiveJob } from "@/lib/archive";
 
 /**
  * THE ONE SCHEDULED JOB (spec §37)
@@ -77,6 +78,7 @@ async function handle(request: Request): Promise<Response> {
     ["ordersExpired", () => expireOverdueOrders(200)],
     ["wantedExpired", expireOverdueWantedRequests],
     ["contractsExpired", expireOverdueContracts],
+    ["mediaPostsExpired", cleanupExpiredMediaPosts],
   ] as const;
 
   for (const [name, run] of sweepList) {
@@ -94,14 +96,21 @@ async function handle(request: Request): Promise<Response> {
   // 2. The retention engine.
   const summary = await runFullCleanup({ source: "CRON" }, { budgetMs: CLEANUP_BUDGET_MS });
 
-  // 3. V4.1: Resumable 24-hour GitHub archival cycle across the 5 private repositories.
+  // 3. V4.1 & V5: Resumable 24-hour GitHub archival job & 15-repo rollover check.
   let githubArchival: unknown = null;
   try {
-    githubArchival = await run24HourGithubArchivalCycle();
-  } catch (e) {
-    githubArchival = {
-      error: e instanceof Error ? e.message : String(e),
-    };
+    const jobRun = await startOrResumeV5ArchiveJob({
+      triggerType: "SCHEDULED_24H",
+    });
+    githubArchival = jobRun;
+  } catch {
+    try {
+      githubArchival = await run24HourGithubArchivalCycle();
+    } catch (e) {
+      githubArchival = {
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
   }
 
   return Response.json(

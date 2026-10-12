@@ -112,7 +112,54 @@ body {
 .badge-suspended { background: #fff6e0; color: #8a5a00; }
 .badge-banned { background: var(--danger-bg); color: var(--danger); }
 
+/* V5 Section Accent Themes */
+.theme-market-banner {
+  background: linear-gradient(135deg, #0b2e1b 0%, #134e2e 100%);
+  color: #ffffff;
+}
+.theme-marketplace-banner {
+  background: linear-gradient(135deg, #172554 0%, #1e40af 100%);
+  color: #ffffff;
+}
+.theme-media-banner {
+  background: linear-gradient(135deg, #2e1065 0%, #5b21b6 100%);
+  color: #ffffff;
+}
+.theme-partnership-banner {
+  background: linear-gradient(135deg, #451a03 0%, #92400e 100%);
+  color: #ffffff;
+}
+
+/* Mobile-first ergonomics & anti-zoom input sizing on phones */
+html, body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+
+@media (max-width: 640px) {
+  .input, select.input, textarea.input {
+    font-size: 16px;
+    min-height: 42px;
+  }
+  .btn {
+    min-height: 40px;
+    padding: 0.55rem 0.95rem;
+  }
+  .card {
+    border-radius: 10px;
+  }
+}
+
+/* Responsive table wrapper so tables never break phone width */
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 ::selection {
   background: #111111;
   color: #ffffff;
 }
+

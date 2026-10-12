@@ -3,18 +3,21 @@ import { getCurrentGovernment } from "@/lib/auth";
 import {
   getMarketChartData,
   getRecentMarketOrdersForGov,
+  getLeverageRequestsForGov,
 } from "@/lib/synthetic-market";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { formatDateTime } from "@/lib/datetime";
 import { GovMarketConfigForm } from "@/components/v4/v4-forms";
+import { GovMarketV5Panel } from "@/components/v5/gov-market-v5-panel";
 
 export default async function GovMarketPage() {
   const gov = await getCurrentGovernment();
   if (!gov) return null;
 
-  const [chart15m, recentOrders] = await Promise.all([
+  const [chart15m, recentOrders, leverageReqs] = await Promise.all([
     getMarketChartData("15m", 48),
     getRecentMarketOrdersForGov(80),
+    getLeverageRequestsForGov(),
   ]);
 
   const { state, stats24h } = chart15m;
@@ -91,6 +94,11 @@ export default async function GovMarketPage() {
           </p>
         </div>
       </section>
+
+      <GovMarketV5Panel
+        currentIntervalMinutes={gov.marketUpdateIntervalMinutes ?? 1}
+        leverageRequests={leverageReqs}
+      />
 
       <section className="card p-5">
         <h2 className="font-medium">Configure Synthetic Market Parameters</h2>

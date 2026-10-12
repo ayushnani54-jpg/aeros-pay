@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "V5.0",
+  "repoKey": "aeros-archive-marketplace-orders",
+  "title": "Marketplace Orders Archive",
+  "datasets": [
+    "completed_marketplace_orders"
+  ],
+  "warningThresholdBytes": 838860800,
+  "hardLimitBytes": 943718400
+}

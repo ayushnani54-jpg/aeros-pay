@@ -1,0 +1,46 @@
+# Dependencies
+/node_modules
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# Testing and Coverage
+/coverage
+
+# Next.js Build Output
+/.next/
+/out/
+
+# Production Build
+/build
+
+# Debug Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Environment and Secrets (CRITICAL: Never commit credentials)
+.env
+.env*.local
+.env.development
+.env.test
+.env.production
+*.pem
+*.key
+*.cert
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts.bak
+
+# OS Metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Antigravity/Editor scratch and internal logs
+.system_generated/

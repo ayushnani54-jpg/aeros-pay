@@ -1,0 +1,10 @@
+{
+  "repoKey": "aeros-archive-payments",
+  "title": "Payments & Transfers Archive",
+  "schemaVersion": "V5.0",
+  "datasets": [
+    "transactions_history"
+  ],
+  "activeGeneration": 1,
+  "operatingThresholdMb": 900
+}

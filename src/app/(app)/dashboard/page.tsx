@@ -250,14 +250,14 @@ export default async function DashboardPage() {
       )}
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <QuickAction href="/pay" label="Pay" />
+        <QuickAction href="/pay" label="Send Aeros" />
+        <QuickAction href="/aeros-market" label="Market Index & Trade" />
+        <QuickAction href="/market" label="Goods & Citizen Jobs" />
+        <QuickAction href="/media" label="Aeros Media" />
         <QuickAction href="/exchange" label="Aeros Exchange" />
-        <QuickAction href="/aeros-market" label="Aeros Market" />
-        <QuickAction href="/market" label="Goods Market" />
-        <QuickAction href="/market/orders" label="My Orders" />
+        <QuickAction href="/companies" label="Companies & Alliances" />
         <QuickAction href="/refunds" label="Refund Center" />
-        <QuickAction href="/companies" label="Companies" />
-        <QuickAction href="/transactions" label="Activity" />
+        <QuickAction href="/transactions" label="Ledger Activity" />
       </section>
 
       <PromotionSlot ad={ad} />

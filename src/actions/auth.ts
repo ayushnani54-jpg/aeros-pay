@@ -29,7 +29,9 @@ import {
 import { redirect } from "next/navigation";
 
 export type ActionResult<T = undefined> =
-  | { ok: true; data: T }
+  | (T extends undefined
+      ? { ok: true; data?: undefined; message?: string }
+      : { ok: true; data: T; message?: string })
   | { ok: false; error: string };
 
 function firstZodError(err: unknown): string {

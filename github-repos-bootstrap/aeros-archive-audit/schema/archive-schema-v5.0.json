@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "V5.0",
+  "repoKey": "aeros-archive-audit",
+  "title": "System Audit Archive",
+  "datasets": [
+    "audit_logs_history"
+  ],
+  "warningThresholdBytes": 838860800,
+  "hardLimitBytes": 943718400
+}

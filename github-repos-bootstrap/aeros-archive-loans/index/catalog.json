@@ -1,0 +1,10 @@
+{
+  "repoKey": "aeros-archive-loans",
+  "title": "Government Loans Archive",
+  "schemaVersion": "V5.0",
+  "datasets": [
+    "repaid_loans"
+  ],
+  "activeGeneration": 1,
+  "operatingThresholdMb": 900
+}

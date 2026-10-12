@@ -352,3 +352,229 @@ export const GITHUB_REPO_WARNING_BYTES = 400 * 1024 * 1024; // 419,430,400 bytes
 export const GITHUB_REPO_HARD_LIMIT_BYTES = 750 * 1024 * 1024; // 786,432,000 bytes
 export const GITHUB_BATCH_MAX_RECORDS = 500;
 
+// ---------------------------------------------------------------------------
+// V5 — 15 Dedicated Private GitHub Historical Archive Repositories (900 MB Threshold)
+// ---------------------------------------------------------------------------
+
+export const GITHUB_ARCHIVE_REPO_KEYS_V5 = [
+  "aeros-archive-market-index",
+  "aeros-archive-trading-ledger",
+  "aeros-archive-payments",
+  "aeros-archive-exchange",
+  "aeros-archive-refunds",
+  "aeros-archive-marketplace-listings",
+  "aeros-archive-marketplace-orders",
+  "aeros-archive-jobs",
+  "aeros-archive-contracts",
+  "aeros-archive-company-partnerships",
+  "aeros-archive-company-finances",
+  "aeros-archive-loans",
+  "aeros-archive-media",
+  "aeros-archive-government",
+  "aeros-archive-audit",
+] as const;
+export type GithubArchiveRepoKeyV5 = (typeof GITHUB_ARCHIVE_REPO_KEYS_V5)[number];
+
+export const ARCHIVE_DATASET_KEYS_V5 = [
+  "old_market_candles",
+  "settled_market_orders",
+  "transactions_history",
+  "closed_exchange_purchases",
+  "closed_refunds",
+  "closed_marketplace_listings",
+  "completed_marketplace_orders",
+  "completed_jobs",
+  "settled_contracts",
+  "settled_partnerships",
+  "settled_invoices",
+  "repaid_loans",
+  "archived_media_posts",
+  "government_decisions",
+  "audit_logs_history",
+] as const;
+export type ArchiveDatasetKeyV5 = (typeof ARCHIVE_DATASET_KEYS_V5)[number];
+
+export const GITHUB_ARCHIVE_REPOS_V5: Record<
+  GithubArchiveRepoKeyV5,
+  {
+    repoKey: GithubArchiveRepoKeyV5;
+    defaultRepoName: string;
+    envVarName: string;
+    title: string;
+    description: string;
+    datasets: readonly string[];
+  }
+> = {
+  "aeros-archive-market-index": {
+    repoKey: "aeros-archive-market-index",
+    defaultRepoName: "aeros-archive-market-index",
+    envVarName: "GITHUB_REPO_MARKET_INDEX",
+    title: "Repository 1 — Market Index Archive",
+    description: "Historical 5m, 15m, and 1h OHLCV candles, price snapshots, and AMI index records.",
+    datasets: ["old_market_candles"],
+  },
+  "aeros-archive-trading-ledger": {
+    repoKey: "aeros-archive-trading-ledger",
+    defaultRepoName: "aeros-archive-trading-ledger",
+    envVarName: "GITHUB_REPO_TRADING_LEDGER",
+    title: "Repository 2 — Trading Ledger Archive",
+    description: "Closed hedge-style trading positions, execution orders, and realized P&L settlements.",
+    datasets: ["settled_market_orders"],
+  },
+  "aeros-archive-payments": {
+    repoKey: "aeros-archive-payments",
+    defaultRepoName: "aeros-archive-payments",
+    envVarName: "GITHUB_REPO_PAYMENTS",
+    title: "Repository 3 — Payments & Transfers Archive",
+    description: "Settled P2P transfers, user-to-company transactions, and tax deductions.",
+    datasets: ["transactions_history"],
+  },
+  "aeros-archive-exchange": {
+    repoKey: "aeros-archive-exchange",
+    defaultRepoName: "aeros-archive-exchange",
+    envVarName: "GITHUB_REPO_EXCHANGE",
+    title: "Repository 4 — Aeros Exchange Archive",
+    description: "Settled INR-to-Aeros package acquisitions and immutable policy snapshots.",
+    datasets: ["closed_exchange_purchases"],
+  },
+  "aeros-archive-refunds": {
+    repoKey: "aeros-archive-refunds",
+    defaultRepoName: "aeros-archive-refunds",
+    envVarName: "GITHUB_REPO_REFUNDS",
+    title: "Repository 5 — Virtual Refunds Archive",
+    description: "Resolved virtual refund claims, clawbacks, and Government refund determinations.",
+    datasets: ["closed_refunds"],
+  },
+  "aeros-archive-marketplace-listings": {
+    repoKey: "aeros-archive-marketplace-listings",
+    defaultRepoName: "aeros-archive-marketplace-listings",
+    envVarName: "GITHUB_REPO_MARKETPLACE_LISTINGS",
+    title: "Repository 6 — Marketplace Listings Archive",
+    description: "Expired or closed public listings, buyer wanted requests, and seller promotions.",
+    datasets: ["closed_marketplace_listings"],
+  },
+  "aeros-archive-marketplace-orders": {
+    repoKey: "aeros-archive-marketplace-orders",
+    defaultRepoName: "aeros-archive-marketplace-orders",
+    envVarName: "GITHUB_REPO_MARKETPLACE_ORDERS",
+    title: "Repository 7 — Marketplace Orders Archive",
+    description: "Settled escrow orders, buyer ratings, and order delivery confirmations.",
+    datasets: ["completed_marketplace_orders"],
+  },
+  "aeros-archive-jobs": {
+    repoKey: "aeros-archive-jobs",
+    defaultRepoName: "aeros-archive-jobs",
+    envVarName: "GITHUB_REPO_JOBS",
+    title: "Repository 8 — Jobs & Employment Archive",
+    description: "Completed citizen employment jobs, accepted applications, and milestone disbursements.",
+    datasets: ["completed_jobs"],
+  },
+  "aeros-archive-contracts": {
+    repoKey: "aeros-archive-contracts",
+    defaultRepoName: "aeros-archive-contracts",
+    envVarName: "GITHUB_REPO_CONTRACTS",
+    title: "Repository 9 — Contracts Archive",
+    description: "Completed milestone and bounty contracts, submissions, and award records.",
+    datasets: ["settled_contracts"],
+  },
+  "aeros-archive-company-partnerships": {
+    repoKey: "aeros-archive-company-partnerships",
+    defaultRepoName: "aeros-archive-company-partnerships",
+    envVarName: "GITHUB_REPO_PARTNERSHIPS",
+    title: "Repository 10 — Company Partnerships Archive",
+    description: "Approved inter-company agreements, 50/50 profit distributions, and settlement audits.",
+    datasets: ["settled_partnerships"],
+  },
+  "aeros-archive-company-finances": {
+    repoKey: "aeros-archive-company-finances",
+    defaultRepoName: "aeros-archive-company-finances",
+    envVarName: "GITHUB_REPO_COMPANY_FINANCES",
+    title: "Repository 11 — Company Finances Archive",
+    description: "Paid itemized invoices, company acquisition records, and transfer agreements.",
+    datasets: ["settled_invoices"],
+  },
+  "aeros-archive-loans": {
+    repoKey: "aeros-archive-loans",
+    defaultRepoName: "aeros-archive-loans",
+    envVarName: "GITHUB_REPO_LOANS",
+    title: "Repository 12 — Government Loans Archive",
+    description: "Fully repaid or restructured company loans, instalment schedules, and audit records.",
+    datasets: ["repaid_loans"],
+  },
+  "aeros-archive-media": {
+    repoKey: "aeros-archive-media",
+    defaultRepoName: "aeros-archive-media",
+    envVarName: "GITHUB_REPO_MEDIA",
+    title: "Repository 13 — Aeros Media Archive",
+    description: "Historical social posts exceeding 7-day public retention, comments, and moderation logs.",
+    datasets: ["archived_media_posts"],
+  },
+  "aeros-archive-government": {
+    repoKey: "aeros-archive-government",
+    defaultRepoName: "aeros-archive-government",
+    envVarName: "GITHUB_REPO_GOVERNMENT",
+    title: "Repository 14 — Government Decisions Archive",
+    description: "Administrative policy updates, tax matrix revisions, and monetary issuance voting.",
+    datasets: ["government_decisions"],
+  },
+  "aeros-archive-audit": {
+    repoKey: "aeros-archive-audit",
+    defaultRepoName: "aeros-archive-audit",
+    envVarName: "GITHUB_REPO_AUDIT",
+    title: "Repository 15 — System Audit Archive",
+    description: "System audit events, security validations, and archive verification checkpoints.",
+    datasets: ["audit_logs_history"],
+  },
+};
+
+export const DATASET_TO_GITHUB_REPO_V5: Record<ArchiveDatasetKeyV5, GithubArchiveRepoKeyV5> = {
+  old_market_candles: "aeros-archive-market-index",
+  settled_market_orders: "aeros-archive-trading-ledger",
+  transactions_history: "aeros-archive-payments",
+  closed_exchange_purchases: "aeros-archive-exchange",
+  closed_refunds: "aeros-archive-refunds",
+  closed_marketplace_listings: "aeros-archive-marketplace-listings",
+  completed_marketplace_orders: "aeros-archive-marketplace-orders",
+  completed_jobs: "aeros-archive-jobs",
+  settled_contracts: "aeros-archive-contracts",
+  settled_partnerships: "aeros-archive-company-partnerships",
+  settled_invoices: "aeros-archive-company-finances",
+  repaid_loans: "aeros-archive-loans",
+  archived_media_posts: "aeros-archive-media",
+  government_decisions: "aeros-archive-government",
+  audit_logs_history: "aeros-archive-audit",
+};
+
+/** V5 Operating Threshold: 900 MB hard limit, 800 MB warning (approaching threshold) */
+export const GITHUB_V5_REPO_WARNING_BYTES = 800 * 1024 * 1024; // 838,860,800 bytes
+export const GITHUB_V5_REPO_HARD_LIMIT_BYTES = 900 * 1024 * 1024; // 943,718,400 bytes
+
+// V5 Market Update Intervals (1 minute default, 5 minutes option)
+export const MARKET_UPDATE_INTERVALS = [1, 5] as const;
+export type MarketUpdateInterval = (typeof MARKET_UPDATE_INTERVALS)[number];
+export const DEFAULT_MARKET_UPDATE_INTERVAL: MarketUpdateInterval = 1;
+
+// V5 Leverage Progression (2x -> 4x -> 8x -> 10x, maximum 10x)
+export const LEVERAGE_LEVELS = [2, 4, 8, 10] as const;
+export type LeverageLevel = (typeof LEVERAGE_LEVELS)[number];
+export const DEFAULT_LEVERAGE: LeverageLevel = 2;
+export const MAX_LEVERAGE: LeverageLevel = 10;
+
+// V5 Jobs
+export const JOB_TITLE_MAX_LENGTH = 160;
+export const JOB_DESCRIPTION_MAX_LENGTH = 2000;
+export const JOB_REQUIREMENTS_MAX_LENGTH = 1000;
+export const JOB_MAX_COMPENSATION = 1_000_000;
+
+// V5 Company Partnerships
+export const PARTNERSHIP_TITLE_MAX_LENGTH = 160;
+export const PARTNERSHIP_TERMS_MAX_LENGTH = 2000;
+export const DEFAULT_PARTNERSHIP_SHARE_BP = 5000; // 50.00%
+export const DEFAULT_PARTNERSHIP_TAX_RATE_BP = 500; // 5.00%
+
+// V5 Aeros Media (Text-Only, 7-Day Public Retention)
+export const MEDIA_POST_MAX_LENGTH = 500;
+export const MEDIA_COMMENT_MAX_LENGTH = 300;
+export const MEDIA_RETENTION_DAYS = 7;
+
+

@@ -5,6 +5,8 @@ import {
   getAccountingPreservationSnapshot,
   getArchiveBatchesList,
   getArchiveCenterV41Overview,
+  getLatestArchiveJobRuns,
+  getV5RepositoriesStorageStatus,
 } from "@/lib/archive";
 import { formatBytes } from "@/lib/health";
 import { CURRENCY_NAME, DATASET_TO_GITHUB_REPO } from "@/lib/constants";
@@ -17,17 +19,61 @@ import {
   Run24HourGithubArchivalButton,
   VerifyArchiveBatchForm,
 } from "@/components/v4/v4-forms";
+import {
+  GovArchiveV5Panel,
+  type SerializedArchiveJobRun,
+  type SerializedV5RepoStatus,
+} from "@/components/v5/gov-archive-v5-panel";
 
 export default async function GovArchiveCenterPage() {
   const gov = await getCurrentGovernment();
   if (!gov) return null;
 
-  const [snapshot, v41Overview, batches, checkpoints] = await Promise.all([
-    getAccountingPreservationSnapshot(),
-    getArchiveCenterV41Overview(),
-    getArchiveBatchesList(50),
-    getAccountingCheckpointsList(40),
-  ]);
+  const [snapshot, v41Overview, batches, checkpoints, v5Storage, recentJobRuns] =
+    await Promise.all([
+      getAccountingPreservationSnapshot(),
+      getArchiveCenterV41Overview(),
+      getArchiveBatchesList(50),
+      getAccountingCheckpointsList(40),
+      getV5RepositoriesStorageStatus().catch(() => ({
+        repositories: [],
+        warningCount: 0,
+        criticalCount: 0,
+        hasStorageAlerts: false,
+      })),
+      getLatestArchiveJobRuns(10).catch(() => []),
+    ]);
+
+  const serializedV5Repos: SerializedV5RepoStatus[] = v5Storage.repositories.map((r) => ({
+    repoKey: r.repoKey,
+    baseRepoName: r.baseRepoName,
+    activeRepoName: r.activeRepoName,
+    shardGeneration: r.shardGeneration,
+    estimatedBytesUsed: r.estimatedBytesUsed,
+    warningThresholdBytes: r.warningThresholdBytes,
+    hardLimitBytes: r.hardLimitBytes,
+    percentOfLimit: r.percentOfLimit,
+    healthStatus: r.healthStatus,
+    nextContinuationRepoName: r.nextContinuationRepoName,
+    totalBatchesPushed: r.totalBatchesPushed,
+    totalRecordsArchived: r.totalRecordsArchived,
+  }));
+
+  const serializedJobs: SerializedArchiveJobRun[] = recentJobRuns.map((j) => ({
+    id: j.id,
+    jobNumber: j.jobNumber,
+    status: j.status,
+    currentPhase: j.currentPhase,
+    batchesTotal: j.batchesTotal,
+    batchesCompleted: j.batchesCompleted,
+    recordsProcessed: j.recordsProcessed,
+    recordsVerified: j.recordsVerified,
+    recordsRetainedErrors: j.recordsRetainedErrors,
+    lastError: j.lastError,
+    isLocked: j.isLocked,
+    startedAt: j.startedAt.toISOString(),
+    completedAt: j.completedAt ? j.completedAt.toISOString() : null,
+  }));
 
   const totalArchivedInGithub = v41Overview.repositories.reduce(
     (sum, r) => sum + r.totalRecordsArchived,
@@ -42,12 +88,12 @@ export default async function GovArchiveCenterPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Archive Center V4.1 &amp; 5-Repo GitHub Historical Store
+          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
+            Archive Center V5 — 15-Repository GitHub Store &amp; 900 MB Threshold Monitor
           </h1>
-          <p className="mt-1 text-sm text-muted">
-            Dual-Layer Architecture: <strong>Neon PostgreSQL</strong> (minimal operational state) +{" "}
-            <strong>5 Private GitHub Repositories</strong> (permanent historical economic store).
+          <p className="mt-1 text-xs text-muted sm:text-sm">
+            Dual-Layer Architecture: <strong>Neon PostgreSQL</strong> (essential operational state) +{" "}
+            <strong>15 Private GitHub Repositories</strong> (permanent historical economic store).
             Records &ge;24h old are archived, SHA-256 verified remotely, and safely cleared from
             Neon while preserving 100% of balances and supply invariants.
           </p>
@@ -75,6 +121,14 @@ export default async function GovArchiveCenterPage() {
           </Link>
         </div>
       </div>
+
+      {/* V5 Manual "Start GitHub Archive" Control & 15-Repo 900 MB Threshold Monitor */}
+      <GovArchiveV5Panel
+        repositories={serializedV5Repos}
+        recentJobs={serializedJobs}
+        warningCount={v5Storage.warningCount}
+        criticalCount={v5Storage.criticalCount}
+      />
 
       {/* 1. 5 Private GitHub Archive Repositories Status */}
       <section className="card p-5">

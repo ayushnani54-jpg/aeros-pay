@@ -6,6 +6,7 @@ import {
   accountingCheckpoints,
   archiveBatches,
   archivedRecordLedger,
+  archiveJobRuns,
   archiveRepositories,
   auditLogs,
   companies,
@@ -29,6 +30,7 @@ import {
   users,
   type AccountingCheckpoint,
   type ArchiveBatch,
+  type ArchiveJobRun,
   type ArchiveRepository,
   type Transaction,
 } from "@/db/schema";
@@ -52,16 +54,24 @@ import {
   DEFAULT_GITHUB_ARCHIVE_MIN_AGE_HOURS,
   GITHUB_ARCHIVE_REPOS,
   GITHUB_ARCHIVE_REPO_KEYS,
+  GITHUB_ARCHIVE_REPO_KEYS_V5,
   GITHUB_BATCH_MAX_RECORDS,
   GITHUB_REPO_HARD_LIMIT_BYTES,
   GITHUB_REPO_WARNING_BYTES,
+  GITHUB_V5_REPO_HARD_LIMIT_BYTES,
+  GITHUB_V5_REPO_WARNING_BYTES,
   type ArchiveDatasetKey,
   type GithubArchiveRepoKey,
 } from "./constants";
 import {
+  createContinuationArchiveRepository,
+  ensureV5RemoteRepositoriesProvisioned,
   evaluateRepoStorageHealth,
+  evaluateRepoStorageHealthV5,
   fetchArchivedBatchRecordsFromGithub,
+  getContinuationRepoName,
   getGithubArchiveEnvConfig,
+  getGithubArchiveEnvConfigV5,
   GithubArchiveRemoteError,
   parseJsonl,
   sanitizeRecordForArchive,
@@ -2641,3 +2651,287 @@ export async function getAccountingCheckpointsList(
     .orderBy(desc(accountingCheckpoints.createdAt))
     .limit(limit);
 }
+
+// ---------------------------------------------------------------------------
+// AEROS PAY V5 — 15-REPOSITORY SEEDING, 900 MB ROLLOVER & MANUAL ARCHIVE JOB RUNNER
+// ---------------------------------------------------------------------------
+
+export async function ensureV5ArchiveRepositoriesSeeded(): Promise<ArchiveRepository[]> {
+  const cfg = getGithubArchiveEnvConfigV5();
+  for (const repoKey of GITHUB_ARCHIVE_REPO_KEYS_V5) {
+    const repoName = cfg.repos[repoKey];
+    await db
+      .insert(archiveRepositories)
+      .values({
+        repoKey,
+        repoOwner: cfg.owner,
+        repoName,
+        branch: cfg.branch,
+        shardGeneration: 1,
+        warningThresholdBytes: GITHUB_V5_REPO_WARNING_BYTES,
+        hardLimitBytes: GITHUB_V5_REPO_HARD_LIMIT_BYTES,
+        healthStatus: "HEALTHY",
+        isActiveForWrites: true,
+      })
+      .onConflictDoNothing();
+  }
+  return db.select().from(archiveRepositories).orderBy(asc(archiveRepositories.repoKey));
+}
+
+export interface V5RepositoryStorageStatus {
+  repoKey: string;
+  baseRepoName: string;
+  activeRepoName: string;
+  shardGeneration: number;
+  estimatedBytesUsed: number;
+  warningThresholdBytes: number;
+  hardLimitBytes: number;
+  percentOfLimit: number;
+  healthStatus: "NORMAL" | "WARNING" | "CRITICAL";
+  nextContinuationRepoName: string;
+  totalBatchesPushed: number;
+  totalRecordsArchived: number;
+  lastPushAt: Date | null;
+  lastVerifiedAt: Date | null;
+  lastError: string | null;
+}
+
+export async function getV5RepositoriesStorageStatus(): Promise<{
+  repositories: V5RepositoryStorageStatus[];
+  warningCount: number;
+  criticalCount: number;
+  hasStorageAlerts: boolean;
+}> {
+  const rows = await ensureV5ArchiveRepositoriesSeeded();
+  const v5KeysSet = new Set<string>(GITHUB_ARCHIVE_REPO_KEYS_V5);
+
+  const repositories: V5RepositoryStorageStatus[] = rows
+    .filter((r) => v5KeysSet.has(r.repoKey))
+    .map((r) => {
+      const status = evaluateRepoStorageHealthV5(
+        r.estimatedBytesUsed,
+        GITHUB_V5_REPO_WARNING_BYTES,
+        GITHUB_V5_REPO_HARD_LIMIT_BYTES,
+      );
+      const gen = r.shardGeneration || 1;
+      const activeName =
+        r.continuationRepoName ||
+        (gen > 1 ? getContinuationRepoName(r.repoName, gen) : r.repoName);
+      const nextContinuationRepoName = getContinuationRepoName(r.repoName, gen + 1);
+      const percentOfLimit = Number(
+        ((r.estimatedBytesUsed / GITHUB_V5_REPO_HARD_LIMIT_BYTES) * 100).toFixed(2),
+      );
+      return {
+        repoKey: r.repoKey,
+        baseRepoName: r.repoName,
+        activeRepoName: activeName,
+        shardGeneration: gen,
+        estimatedBytesUsed: r.estimatedBytesUsed,
+        warningThresholdBytes: GITHUB_V5_REPO_WARNING_BYTES,
+        hardLimitBytes: GITHUB_V5_REPO_HARD_LIMIT_BYTES,
+        percentOfLimit,
+        healthStatus: status,
+        nextContinuationRepoName,
+        totalBatchesPushed: r.totalBatchesPushed,
+        totalRecordsArchived: r.totalRecordsArchived,
+        lastPushAt: r.lastPushAt,
+        lastVerifiedAt: r.lastVerifiedAt,
+        lastError: r.lastError,
+      };
+    });
+
+  const warningCount = repositories.filter((r) => r.healthStatus === "WARNING").length;
+  const criticalCount = repositories.filter((r) => r.healthStatus === "CRITICAL").length;
+
+  return {
+    repositories,
+    warningCount,
+    criticalCount,
+    hasStorageAlerts: warningCount > 0 || criticalCount > 0,
+  };
+}
+
+export async function getLatestArchiveJobRuns(limit = 15): Promise<ArchiveJobRun[]> {
+  return db
+    .select()
+    .from(archiveJobRuns)
+    .orderBy(desc(archiveJobRuns.startedAt))
+    .limit(limit);
+}
+
+/**
+ * Starts or resumes a durable V5 GitHub Archive Job Run (`Start GitHub Archive` button
+ * or 24-hour automatic schedule). Enforces concurrency protection so two jobs cannot
+ * collide, tracks live stage progression, handles 900 MB continuation rollover, and
+ * verifies remote SHA-256 checksums before any Neon cleanup.
+ */
+export async function startOrResumeV5ArchiveJob(params: {
+  triggerType: "MANUAL_GOV" | "SCHEDULED_24H";
+  olderThanHours?: number;
+  autoClearPrunable?: boolean;
+  triggeredByGovId?: string | null;
+  triggeredByUsername?: string | null;
+}): Promise<ArchiveJobRun> {
+  const olderThanHours = params.olderThanHours ?? DEFAULT_GITHUB_ARCHIVE_MIN_AGE_HOURS;
+  const autoClearPrunable = params.autoClearPrunable ?? true;
+
+  await ensureV5ArchiveRepositoriesSeeded();
+
+  // Concurrency guard: check if a job is currently locked & active (< 10 minutes old)
+  const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+  const [activeJob] = await db
+    .select()
+    .from(archiveJobRuns)
+    .where(
+      and(
+        eq(archiveJobRuns.isLocked, true),
+        sql`${archiveJobRuns.updatedAt} > ${tenMinAgo}`,
+      ),
+    )
+    .orderBy(desc(archiveJobRuns.startedAt))
+    .limit(1);
+
+  if (activeJob) {
+    return activeJob;
+  }
+
+  const jobNumber = `AJR-${Date.now().toString(36).toUpperCase()}`;
+  const [jobRow] = await db
+    .insert(archiveJobRuns)
+    .values({
+      jobNumber,
+      status: "RUNNING",
+      currentPhase: "PREPARING",
+      batchesTotal: ARCHIVE_DATASET_KEYS.length,
+      batchesCompleted: 0,
+      recordsProcessed: 0,
+      recordsVerified: 0,
+      recordsRetainedErrors: 0,
+      initiatedByGovId: params.triggeredByGovId ?? null,
+      isLocked: true,
+    })
+    .returning();
+
+  const updateStage = async (
+    status: ArchiveJobRun["status"],
+    patch?: Partial<{
+      currentPhase: string;
+      currentCategory: string | null;
+      currentRepo: string | null;
+      batchesCompleted: number;
+      recordsProcessed: number;
+      recordsVerified: number;
+      recordsRetainedErrors: number;
+      lastError: string | null;
+      isLocked: boolean;
+      completedAt: Date | null;
+    }>,
+  ) => {
+    const [updated] = await db
+      .update(archiveJobRuns)
+      .set({
+        status,
+        ...patch,
+        updatedAt: new Date(),
+      })
+      .where(eq(archiveJobRuns.id, jobRow.id))
+      .returning();
+    return updated;
+  };
+
+  try {
+    // Ensure all 15 dedicated private V5 archive repositories exist on GitHub
+    await ensureV5RemoteRepositoriesProvisioned();
+
+    // Check 900 MB storage thresholds & roll over any repository at/above 900 MB
+    const repoRows = await db.select().from(archiveRepositories);
+    for (const repo of repoRows) {
+      const health = evaluateRepoStorageHealthV5(repo.estimatedBytesUsed);
+      if (health === "CRITICAL") {
+        const nextGen = (repo.shardGeneration || 1) + 1;
+        const nextName = getContinuationRepoName(repo.repoName, nextGen);
+        await createContinuationArchiveRepository({
+          repoKey: `${repo.repoKey}-${nextGen}`,
+          repoName: nextName,
+          description: `Aeros Pay V5 Continuation Archive (${repo.repoKey} shard #${nextGen})`,
+        });
+        await db
+          .update(archiveRepositories)
+          .set({
+            shardGeneration: nextGen,
+            continuationRepoKey: `${repo.repoKey}-${nextGen}`,
+            continuationRepoName: nextName,
+            estimatedBytesUsed: 0,
+            healthStatus: "HEALTHY",
+            updatedAt: new Date(),
+          })
+          .where(eq(archiveRepositories.repoKey, repo.repoKey));
+      }
+    }
+
+    await updateStage("RUNNING", {
+      currentPhase: "READING",
+    });
+
+    await updateStage("RUNNING", {
+      currentPhase: "UPLOADING",
+    });
+
+    const cycleSummary = await run24HourGithubArchivalCycle({
+      olderThanHours,
+      autoClearPrunable,
+    });
+
+    const totalUploaded = cycleSummary.archivedBatches.reduce(
+      (acc, b) => acc + b.recordCount,
+      0,
+    );
+    const totalVerified = cycleSummary.archivedBatches
+      .filter((b) => b.stateMachineStatus === "VERIFIED" || b.stateMachineStatus === "COMPLETED")
+      .reduce((acc, b) => acc + b.recordCount, 0);
+    const totalCleaned = cycleSummary.archivedBatches.reduce(
+      (acc, b) => acc + b.clearedCount,
+      0,
+    );
+
+    await updateStage("RUNNING", {
+      currentPhase: "VERIFYING",
+      recordsProcessed: totalUploaded,
+      recordsVerified: totalVerified,
+    });
+
+    await updateStage("RUNNING", {
+      currentPhase: "INTEGRITY_CHECK",
+    });
+
+    if (autoClearPrunable && totalCleaned > 0) {
+      await updateStage("RUNNING", {
+        currentPhase: "CLEANUP",
+      });
+    }
+
+    const finalJob = await updateStage("COMPLETED", {
+      currentPhase: "COMPLETED",
+      currentCategory: null,
+      currentRepo: null,
+      batchesCompleted: ARCHIVE_DATASET_KEYS.length,
+      recordsProcessed: totalUploaded,
+      recordsVerified: totalVerified,
+      recordsRetainedErrors: cycleSummary.errors.length,
+      isLocked: false,
+      completedAt: new Date(),
+    });
+
+    return finalJob;
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : "Archive job execution failed.";
+    return updateStage("FAILED", {
+      currentPhase: "FAILED",
+      lastError: errMsg,
+      isLocked: false,
+      completedAt: new Date(),
+    });
+  }
+}
+
+

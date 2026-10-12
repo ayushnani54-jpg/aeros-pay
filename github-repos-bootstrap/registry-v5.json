@@ -1,0 +1,128 @@
+{
+  "version": "5.0.0",
+  "totalRepositories": 15,
+  "operatingThresholdMb": 900,
+  "warningThresholdMb": 800,
+  "repositories": [
+    {
+      "key": "aeros-archive-market-index",
+      "title": "Market Index Archive",
+      "ds": [
+        "old_market_candles"
+      ],
+      "desc": "Historical 5m, 15m, and 1h OHLCV candles and AMI price snapshots."
+    },
+    {
+      "key": "aeros-archive-trading-ledger",
+      "title": "Trading Ledger Archive",
+      "ds": [
+        "settled_market_orders"
+      ],
+      "desc": "Closed hedge-style trading positions, orders, and realized P&L settlements."
+    },
+    {
+      "key": "aeros-archive-payments",
+      "title": "Payments & Transfers Archive",
+      "ds": [
+        "transactions_history"
+      ],
+      "desc": "Settled P2P transfers, user-to-company payments, and tax entries."
+    },
+    {
+      "key": "aeros-archive-exchange",
+      "title": "Aeros Exchange Archive",
+      "ds": [
+        "closed_exchange_purchases"
+      ],
+      "desc": "Settled INR-to-Aeros package acquisitions and frozen policy snapshots."
+    },
+    {
+      "key": "aeros-archive-refunds",
+      "title": "Virtual Refunds Archive",
+      "ds": [
+        "closed_refunds"
+      ],
+      "desc": "Resolved virtual refund claims and Government decisions."
+    },
+    {
+      "key": "aeros-archive-marketplace-listings",
+      "title": "Marketplace Listings Archive",
+      "ds": [
+        "closed_marketplace_listings"
+      ],
+      "desc": "Expired or closed public marketplace listings and wanted requests."
+    },
+    {
+      "key": "aeros-archive-marketplace-orders",
+      "title": "Marketplace Orders Archive",
+      "ds": [
+        "completed_marketplace_orders"
+      ],
+      "desc": "Completed marketplace escrow orders and buyer ratings."
+    },
+    {
+      "key": "aeros-archive-jobs",
+      "title": "Jobs & Employment Archive",
+      "ds": [
+        "completed_jobs"
+      ],
+      "desc": "Completed citizen employment jobs, applications, and disbursements."
+    },
+    {
+      "key": "aeros-archive-contracts",
+      "title": "Contracts Archive",
+      "ds": [
+        "settled_contracts"
+      ],
+      "desc": "Completed milestone and bounty contracts."
+    },
+    {
+      "key": "aeros-archive-company-partnerships",
+      "title": "Company Partnerships Archive",
+      "ds": [
+        "settled_partnerships"
+      ],
+      "desc": "Approved inter-company agreements and 50/50 profit settlements."
+    },
+    {
+      "key": "aeros-archive-company-finances",
+      "title": "Company Finances Archive",
+      "ds": [
+        "settled_invoices"
+      ],
+      "desc": "Paid itemized invoices and company acquisition records."
+    },
+    {
+      "key": "aeros-archive-loans",
+      "title": "Government Loans Archive",
+      "ds": [
+        "repaid_loans"
+      ],
+      "desc": "Fully repaid or restructured company loans and instalment records."
+    },
+    {
+      "key": "aeros-archive-media",
+      "title": "Aeros Media Archive",
+      "ds": [
+        "archived_media_posts"
+      ],
+      "desc": "Historical social posts exceeding 7-day public retention, comments, and moderation logs."
+    },
+    {
+      "key": "aeros-archive-government",
+      "title": "Government Decisions Archive",
+      "ds": [
+        "government_decisions"
+      ],
+      "desc": "Administrative policy updates, tax matrix revisions, and issuance votes."
+    },
+    {
+      "key": "aeros-archive-audit",
+      "title": "System Audit Archive",
+      "ds": [
+        "audit_logs_history"
+      ],
+      "desc": "System audit events, security validations, and archive verification checkpoints."
+    }
+  ]
+}

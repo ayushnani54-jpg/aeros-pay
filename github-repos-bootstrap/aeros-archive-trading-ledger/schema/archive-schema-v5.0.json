@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "V5.0",
+  "repoKey": "aeros-archive-trading-ledger",
+  "title": "Trading Ledger Archive",
+  "datasets": [
+    "settled_market_orders"
+  ],
+  "warningThresholdBytes": 838860800,
+  "hardLimitBytes": 943718400
+}

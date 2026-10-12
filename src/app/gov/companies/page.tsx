@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { getAllCompaniesForGovernment, getGovernmentSingleton } from "@/lib/queries";
+import { listAllPartnershipsForGov } from "@/lib/partnerships";
 import { CompanyStatusBadge } from "@/components/status-badge";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { effectiveCompanyStatus } from "@/lib/status";
 import { formatDate } from "@/lib/datetime";
+import { GovPartnershipsV5Panel } from "@/components/v5/gov-partnerships-v5-panel";
 
 const TABS = ["ALL", "PENDING", "APPROVED", "SUSPENDED", "REJECTED", "REVOKED"];
 
@@ -11,9 +13,10 @@ export default async function GovCompaniesPage({ searchParams }: PageProps<"/gov
   const params = await searchParams;
   const filter = typeof params.status === "string" ? params.status : "ALL";
 
-  const [rows, gov] = await Promise.all([
+  const [rows, gov, partnerships] = await Promise.all([
     getAllCompaniesForGovernment(),
     getGovernmentSingleton(),
+    listAllPartnershipsForGov(),
   ]);
 
   const filtered = filter === "ALL" ? rows : rows.filter((r) => r.company.status === filter);
@@ -22,13 +25,18 @@ export default async function GovCompaniesPage({ searchParams }: PageProps<"/gov
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Companies</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Companies &amp; Corporate Alliances</h1>
         <p className="mt-1 text-sm text-muted">
           Default company tax: {defaultTaxPercent.toFixed(2)}% · approval funds{" "}
           {(gov?.companyApprovalFundingAmount ?? 3000).toLocaleString()} {CURRENCY_NAME} from the
           treasury
         </p>
       </div>
+
+      <GovPartnershipsV5Panel
+        partnerships={partnerships}
+        defaultTaxRateBp={gov?.companyTaxRateBp ?? 500}
+      />
 
       <div className="flex flex-wrap gap-2">
         {TABS.map((tab) => {

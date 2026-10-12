@@ -280,6 +280,68 @@ export const archiveBatchStatusEnum = pgEnum("archive_batch_status", [
   "CLEARED",
 ]);
 
+// --- V5 enums ---------------------------------------------------------------
+
+export const tradePositionDirectionEnum = pgEnum("trade_position_direction", [
+  "LONG",
+  "SHORT",
+]);
+
+export const tradePositionStatusEnum = pgEnum("trade_position_status", [
+  "OPEN",
+  "CLOSED",
+]);
+
+export const leverageRequestStatusEnum = pgEnum("leverage_request_status", [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+]);
+
+export const employerTypeEnum = pgEnum("employer_type", [
+  "GOVERNMENT",
+  "COMPANY",
+]);
+
+export const jobStatusEnum = pgEnum("job_status", [
+  "OPEN",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "CANCELLED",
+  "CLOSED",
+]);
+
+export const jobApplicationStatusEnum = pgEnum("job_application_status", [
+  "PENDING",
+  "ACCEPTED",
+  "REJECTED",
+  "WITHDRAWN",
+]);
+
+export const partnershipStatusEnum = pgEnum("partnership_status", [
+  "PROPOSED",
+  "ACCEPTED_BY_PARTNER",
+  "REJECTED_BY_PARTNER",
+  "APPROVED_BY_GOVERNMENT",
+  "REJECTED_BY_GOVERNMENT",
+  "TERMINATED",
+]);
+
+export const mediaModerationStatusEnum = pgEnum("media_moderation_status", [
+  "ACTIVE",
+  "FLAGGED",
+  "MODERATED_HIDDEN",
+]);
+
+export const archiveJobStatusEnum = pgEnum("archive_job_status", [
+  "IDLE",
+  "RUNNING",
+  "COMPLETED",
+  "FAILED",
+  "PAUSED",
+]);
+
+
 // ---------------------------------------------------------------------------
 // Government (singleton row for V1 — schema allows future multi-admin use)
 // ---------------------------------------------------------------------------
@@ -408,6 +470,10 @@ export const government = pgTable("government", {
   archivedTaxCollected: integer("archived_tax_collected").notNull().default(0),
   /** Number of archived & cleared transactions that involved the Government treasury. */
   archivedTxCount: integer("archived_tx_count").notNull().default(0),
+
+  // --- V5: Configurable Market Update Frequency (1 minute or 5 minutes) ------
+  marketUpdateIntervalMinutes: integer("market_update_interval_minutes").notNull().default(1),
+
 
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
@@ -546,6 +612,9 @@ export const users = pgTable("users", {
   archivedCredits: integer("archived_credits").notNull().default(0),
   archivedDebits: integer("archived_debits").notNull().default(0),
   archivedTxCount: integer("archived_tx_count").notNull().default(0),
+
+  // --- V5: Approved leverage progression cap (2x, 4x, 8x, 10x) --------------
+  maxLeverage: integer("max_leverage").notNull().default(2),
 }, (t) => ([
   uniqueIndex("users_registration_code_unique").on(t.registrationCodeId),
   check("users_username_lowercase", sql`${t.username} = lower(${t.username})`),
@@ -554,6 +623,7 @@ export const users = pgTable("users", {
   check("users_archived_credits_nonnegative", sql`${t.archivedCredits} >= 0`),
   check("users_archived_debits_nonnegative", sql`${t.archivedDebits} >= 0`),
   check("users_archived_tx_count_nonnegative", sql`${t.archivedTxCount} >= 0`),
+  check("users_max_leverage_bounds", sql`${t.maxLeverage} >= 2 AND ${t.maxLeverage} <= 10`),
 ]));
 
 // ---------------------------------------------------------------------------
@@ -2433,6 +2503,10 @@ export const archiveRepositories = pgTable(
       .notNull()
       .default("HEALTHY"),
     lastError: text("last_error"),
+    // --- V5: Continuation repository mapping & write status -----------------
+    continuationRepoKey: varchar("continuation_repo_key", { length: 64 }),
+    continuationRepoName: varchar("continuation_repo_name", { length: 120 }),
+    isActiveForWrites: boolean("is_active_for_writes").notNull().default(true),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ([
@@ -2574,6 +2648,259 @@ export const accountingCheckpoints = pgTable(
   ]),
 );
 
+// --- V5 TABLES --------------------------------------------------------------
+
+/** Durable, resumable GitHub archival job runs with mutex lock & stage tracking */
+export const archiveJobRuns = pgTable(
+  "archive_job_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    jobNumber: varchar("job_number", { length: 32 }).notNull().unique(),
+    status: archiveJobStatusEnum("status").notNull().default("IDLE"),
+    currentPhase: varchar("current_phase", { length: 48 }).notNull().default("IDLE"),
+    currentCategory: varchar("current_category", { length: 64 }),
+    currentRepo: varchar("current_repo", { length: 120 }),
+    batchesTotal: integer("batches_total").notNull().default(0),
+    batchesCompleted: integer("batches_completed").notNull().default(0),
+    recordsProcessed: integer("records_processed").notNull().default(0),
+    recordsVerified: integer("records_verified").notNull().default(0),
+    recordsRetainedErrors: integer("records_retained_errors").notNull().default(0),
+    lastError: text("last_error"),
+    initiatedByGovId: uuid("initiated_by_gov_id").references(() => government.id),
+    isLocked: boolean("is_locked").notNull().default(false),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => ([
+    index("archive_job_runs_status_idx").on(t.status, t.startedAt),
+    index("archive_job_runs_locked_idx").on(t.isLocked),
+  ]),
+);
+
+/** Hedge-style individually tracked trading positions (BUY=LONG, SELL=SHORT) */
+export const marketTradePositions = pgTable(
+  "market_trade_positions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    positionNumber: varchar("position_number", { length: 32 }).notNull().unique(),
+    userId: uuid("user_id").notNull().references(() => users.id),
+    direction: tradePositionDirectionEnum("direction").notNull(),
+    status: tradePositionStatusEnum("status").notNull().default("OPEN"),
+    quantity: integer("quantity").notNull(),
+    entryPrice: integer("entry_price").notNull(),
+    leverage: integer("leverage").notNull().default(2),
+    marginLocked: integer("margin_locked").notNull(),
+    costBasis: integer("cost_basis").notNull(),
+    closePrice: integer("close_price"),
+    realizedPnl: integer("realized_pnl").notNull().default(0),
+    openTxRef: varchar("open_tx_ref", { length: 32 }),
+    closeTxRef: varchar("close_tx_ref", { length: 32 }),
+    openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+  },
+  (t) => ([
+    check("market_trade_positions_quantity_positive", sql`${t.quantity} >= 1`),
+    check("market_trade_positions_entry_price_positive", sql`${t.entryPrice} >= 1`),
+    check("market_trade_positions_margin_positive", sql`${t.marginLocked} >= 1`),
+    check("market_trade_positions_leverage_valid", sql`${t.leverage} IN (2, 4, 8, 10)`),
+    index("market_trade_positions_user_status_idx").on(t.userId, t.status),
+    index("market_trade_positions_opened_at_idx").on(t.openedAt),
+  ]),
+);
+
+/** Structured citizen leverage progression requests (2x -> 4x -> 8x -> 10x) */
+export const leverageRequests = pgTable(
+  "leverage_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id),
+    requestedLeverage: integer("requested_leverage").notNull(),
+    currentLeverage: integer("current_leverage").notNull().default(2),
+    status: leverageRequestStatusEnum("status").notNull().default("PENDING"),
+    rejectionReason: text("rejection_reason"),
+    adminNotes: text("admin_notes"),
+    userStatsSnapshot: jsonb("user_stats_snapshot"),
+    reviewedByGovId: uuid("reviewed_by_gov_id").references(() => government.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  },
+  (t) => ([
+    check("leverage_requests_target_valid", sql`${t.requestedLeverage} IN (4, 8, 10)`),
+    index("leverage_requests_user_status_idx").on(t.userId, t.status),
+    index("leverage_requests_status_created_idx").on(t.status, t.createdAt),
+  ]),
+);
+
+/** Jobs offered by Government or Registered Companies to Citizens */
+export const jobs = pgTable(
+  "jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    jobNumber: varchar("job_number", { length: 32 }).notNull().unique(),
+    employerType: employerTypeEnum("employer_type").notNull(),
+    employerCompanyId: uuid("employer_company_id").references(() => companies.id),
+    title: varchar("title", { length: 160 }).notNull(),
+    category: varchar("category", { length: 64 }).notNull(),
+    description: text("description").notNull(),
+    requirements: text("requirements").notNull(),
+    compensationAeros: integer("compensation_aeros").notNull(),
+    status: jobStatusEnum("status").notNull().default("OPEN"),
+    hiredUserId: uuid("hired_user_id").references(() => users.id),
+    contractId: uuid("contract_id").references(() => marketplaceContracts.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    check("jobs_compensation_positive", sql`${t.compensationAeros} >= 1`),
+    index("jobs_status_category_idx").on(t.status, t.category),
+    index("jobs_employer_idx").on(t.employerType, t.employerCompanyId),
+  ]),
+);
+
+/** Applications submitted by Citizens for open jobs */
+export const jobApplications = pgTable(
+  "job_applications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    jobId: uuid("job_id").notNull().references(() => jobs.id),
+    userId: uuid("user_id").notNull().references(() => users.id),
+    coverNote: text("cover_note").notNull(),
+    status: jobApplicationStatusEnum("status").notNull().default("PENDING"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  },
+  (t) => ([
+    uniqueIndex("job_applications_user_job_unique").on(t.jobId, t.userId),
+    index("job_applications_job_status_idx").on(t.jobId, t.status),
+  ]),
+);
+
+/** Company-to-Company joint venture partnerships (50/50 division or custom) */
+export const companyPartnerships = pgTable(
+  "company_partnerships",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    partnershipNumber: varchar("partnership_number", { length: 32 }).notNull().unique(),
+    initiatorCompanyId: uuid("initiator_company_id").notNull().references(() => companies.id),
+    partnerCompanyId: uuid("partner_company_id").notNull().references(() => companies.id),
+    title: varchar("title", { length: 160 }).notNull(),
+    termsDescription: text("terms_description").notNull(),
+    initiatorShareBp: integer("initiator_share_bp").notNull().default(5000),
+    partnerShareBp: integer("partner_share_bp").notNull().default(5000),
+    status: partnershipStatusEnum("status").notNull().default("PROPOSED"),
+    rejectionReason: text("rejection_reason"),
+    govTaxRateBp: integer("gov_tax_rate_bp").notNull().default(500),
+    totalSettledVolumeAeros: integer("total_settled_volume_aeros").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    check("company_partnerships_not_self", sql`${t.initiatorCompanyId} <> ${t.partnerCompanyId}`),
+    check("company_partnerships_share_sum", sql`${t.initiatorShareBp} + ${t.partnerShareBp} = 10000`),
+    check("company_partnerships_tax_valid", sql`${t.govTaxRateBp} >= 0 AND ${t.govTaxRateBp} <= 5000`),
+    index("company_partnerships_initiator_idx").on(t.initiatorCompanyId, t.status),
+    index("company_partnerships_partner_idx").on(t.partnerCompanyId, t.status),
+  ]),
+);
+
+/** Atomic profit & expense settlements between partnered companies */
+export const partnershipSettlements = pgTable(
+  "partnership_settlements",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    settlementNumber: varchar("settlement_number", { length: 32 }).notNull().unique(),
+    partnershipId: uuid("partnership_id").notNull().references(() => companyPartnerships.id),
+    grossAmount: integer("gross_amount").notNull(),
+    initiatorPayout: integer("initiator_payout").notNull(),
+    partnerPayout: integer("partner_payout").notNull(),
+    govTaxDeducted: integer("gov_tax_deducted").notNull(),
+    referenceNote: text("reference_note").notNull(),
+    initiatorTxRef: varchar("initiator_tx_ref", { length: 32 }).notNull(),
+    partnerTxRef: varchar("partner_tx_ref", { length: 32 }).notNull(),
+    govTxRef: varchar("gov_tx_ref", { length: 32 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    check("partnership_settlements_gross_positive", sql`${t.grossAmount} >= 1`),
+    check(
+      "partnership_settlements_balanced",
+      sql`${t.initiatorPayout} + ${t.partnerPayout} + ${t.govTaxDeducted} = ${t.grossAmount}`,
+    ),
+    index("partnership_settlements_partnership_idx").on(t.partnershipId, t.createdAt),
+  ]),
+);
+
+/** Aeros Media — Text-only social posts with 7-day public retention */
+export const mediaPosts = pgTable(
+  "media_posts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    postNumber: varchar("post_number", { length: 32 }).notNull().unique(),
+    authorId: uuid("author_id").notNull().references(() => users.id),
+    content: text("content").notNull(),
+    moderationStatus: mediaModerationStatusEnum("moderation_status").notNull().default("ACTIVE"),
+    moderatorReason: text("moderator_reason"),
+    moderatedAt: timestamp("moderated_at", { withTimezone: true }),
+    likesCount: integer("likes_count").notNull().default(0),
+    commentsCount: integer("comments_count").notNull().default(0),
+    sharesCount: integer("shares_count").notNull().default(0),
+    isExpired: boolean("is_expired").notNull().default(false),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    check("media_posts_likes_nonnegative", sql`${t.likesCount} >= 0`),
+    check("media_posts_comments_nonnegative", sql`${t.commentsCount} >= 0`),
+    check("media_posts_shares_nonnegative", sql`${t.sharesCount} >= 0`),
+    index("media_posts_feed_idx").on(t.moderationStatus, t.isExpired, t.createdAt),
+    index("media_posts_author_idx").on(t.authorId, t.createdAt),
+  ]),
+);
+
+/** Comments on Aeros Media posts */
+export const mediaComments = pgTable(
+  "media_comments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    postId: uuid("post_id").notNull().references(() => mediaPosts.id),
+    authorId: uuid("author_id").notNull().references(() => users.id),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    index("media_comments_post_idx").on(t.postId, t.createdAt),
+  ]),
+);
+
+/** Likes on Aeros Media posts */
+export const mediaLikes = pgTable(
+  "media_likes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    postId: uuid("post_id").notNull().references(() => mediaPosts.id),
+    userId: uuid("user_id").notNull().references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    uniqueIndex("media_likes_post_user_unique").on(t.postId, t.userId),
+  ]),
+);
+
+/** Internal shares/reposts on Aeros Media */
+export const mediaShares = pgTable(
+  "media_shares",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    postId: uuid("post_id").notNull().references(() => mediaPosts.id),
+    userId: uuid("user_id").notNull().references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    index("media_shares_post_user_idx").on(t.postId, t.userId),
+  ]),
+);
+
 // --- V4 & V4.1 --------------------------------------------------------------
 export type ExchangePackagePolicy = typeof exchangePackagePolicies.$inferSelect;
 export type ExchangePurchase = typeof exchangePurchases.$inferSelect;
@@ -2586,5 +2913,19 @@ export type ArchiveRepository = typeof archiveRepositories.$inferSelect;
 export type ArchiveBatch = typeof archiveBatches.$inferSelect;
 export type ArchivedRecordLedgerRow = typeof archivedRecordLedger.$inferSelect;
 export type AccountingCheckpoint = typeof accountingCheckpoints.$inferSelect;
+
+// --- V5 ---------------------------------------------------------------------
+export type ArchiveJobRun = typeof archiveJobRuns.$inferSelect;
+export type MarketTradePosition = typeof marketTradePositions.$inferSelect;
+export type LeverageRequest = typeof leverageRequests.$inferSelect;
+export type Job = typeof jobs.$inferSelect;
+export type JobApplication = typeof jobApplications.$inferSelect;
+export type CompanyPartnership = typeof companyPartnerships.$inferSelect;
+export type PartnershipSettlement = typeof partnershipSettlements.$inferSelect;
+export type MediaPost = typeof mediaPosts.$inferSelect;
+export type MediaComment = typeof mediaComments.$inferSelect;
+export type MediaLike = typeof mediaLikes.$inferSelect;
+export type MediaShare = typeof mediaShares.$inferSelect;
+
 
 

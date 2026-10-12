@@ -8,6 +8,13 @@ import {
   GITHUB_REPO_WARNING_BYTES,
   type ArchiveDatasetKey,
   type GithubArchiveRepoKey,
+  // --- V5 ---
+  DATASET_TO_GITHUB_REPO_V5,
+  GITHUB_ARCHIVE_REPOS_V5,
+  GITHUB_ARCHIVE_REPO_KEYS_V5,
+  GITHUB_V5_REPO_HARD_LIMIT_BYTES,
+  GITHUB_V5_REPO_WARNING_BYTES,
+  type GithubArchiveRepoKeyV5,
 } from "./constants";
 
 /**
@@ -40,7 +47,8 @@ export interface GithubArchiveEnvConfig {
 
 export function getGithubArchiveEnvConfig(): GithubArchiveEnvConfig {
   const token = (process.env.GITHUB_ARCHIVE_TOKEN ?? "").trim();
-  const owner = (process.env.GITHUB_ARCHIVE_OWNER ?? "").trim();
+  const explicitOwner = (process.env.GITHUB_ARCHIVE_OWNER ?? "").trim();
+  const owner = explicitOwner || (token ? "ayushnani54-jpg" : "");
   const branch = (process.env.GITHUB_ARCHIVE_BRANCH ?? "main").trim() || "main";
   const rawEnabled = (process.env.GITHUB_ARCHIVE_ENABLED ?? "true").trim().toLowerCase();
   const enabledFlag = rawEnabled !== "false" && rawEnabled !== "0";
@@ -424,6 +432,8 @@ const FORBIDDEN_SECRET_KEYS = new Set([
   "security_code_hash",
   "github_archive_token",
   "session_secret",
+  "sessiontoken",
+  "session_token",
   "cron_secret",
 ]);
 
@@ -743,4 +753,137 @@ export function evaluateRepoStorageHealth(
   return "HEALTHY";
 }
 
-export { GITHUB_ARCHIVE_REPO_KEYS, GITHUB_ARCHIVE_REPOS, DATASET_TO_GITHUB_REPO };
+// ---------------------------------------------------------------------------
+// V5 — 15-Repository Helpers, 900 MB Threshold & Continuation Rotation
+// ---------------------------------------------------------------------------
+
+export function evaluateRepoStorageHealthV5(
+  estimatedBytesUsed: number,
+  warningBytes = GITHUB_V5_REPO_WARNING_BYTES,
+  hardLimitBytes = GITHUB_V5_REPO_HARD_LIMIT_BYTES,
+): "NORMAL" | "WARNING" | "CRITICAL" {
+  if (estimatedBytesUsed >= hardLimitBytes) return "CRITICAL";
+  if (estimatedBytesUsed >= warningBytes) return "WARNING";
+  return "NORMAL";
+}
+
+export function getContinuationRepoName(baseRepoName: string, generation: number): string {
+  if (generation <= 1) return baseRepoName;
+  return `${baseRepoName}-${generation}`;
+}
+
+export function getGithubArchiveEnvConfigV5(): {
+  enabled: boolean;
+  hasLiveCredentials: boolean;
+  owner: string;
+  branch: string;
+  token: string;
+  repos: Record<GithubArchiveRepoKeyV5, string>;
+} {
+  const base = getGithubArchiveEnvConfig();
+  const reposV5: Record<GithubArchiveRepoKeyV5, string> = {} as Record<GithubArchiveRepoKeyV5, string>;
+  for (const k of GITHUB_ARCHIVE_REPO_KEYS_V5) {
+    const meta = GITHUB_ARCHIVE_REPOS_V5[k];
+    const defaultName = meta?.defaultRepoName ?? k;
+    const envVar = meta?.envVarName ?? "";
+    const override = envVar ? (process.env[envVar] ?? "").trim() : "";
+    reposV5[k] = override || defaultName;
+  }
+  return {
+    ...base,
+    repos: reposV5,
+  };
+}
+
+export async function createContinuationArchiveRepository(params: {
+  repoKey: string;
+  repoName: string;
+  description?: string;
+}): Promise<{ ok: boolean; repoName: string; error?: string }> {
+  const cfg = getGithubArchiveEnvConfig();
+  if (!cfg.hasLiveCredentials) {
+    // When offline/local/test fallback, register safely in memory/db
+    return { ok: true, repoName: params.repoName };
+  }
+  try {
+    const url = "https://api.github.com/user/repos";
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${cfg.token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "AerosPay-V5-Archiver",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: params.repoName,
+        private: true,
+        description: params.description ?? `Aeros Pay V5 Historical Archive: ${params.repoKey}`,
+        auto_init: true,
+      }),
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      return { ok: false, repoName: params.repoName, error: `GitHub API error (${res.status}): ${errText}` };
+    }
+    return { ok: true, repoName: params.repoName };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Network error creating continuation repo";
+    return { ok: false, repoName: params.repoName, error: message };
+  }
+}
+
+export async function ensureV5RemoteRepositoriesProvisioned(): Promise<{
+  checked: number;
+  created: string[];
+}> {
+  const cfg = getGithubArchiveEnvConfigV5();
+  if (!cfg.hasLiveCredentials) {
+    return { checked: GITHUB_ARCHIVE_REPO_KEYS_V5.length, created: [] };
+  }
+
+  const created: string[] = [];
+  for (const repoKey of GITHUB_ARCHIVE_REPO_KEYS_V5) {
+    const repoName = cfg.repos[repoKey];
+    const meta = GITHUB_ARCHIVE_REPOS_V5[repoKey];
+    try {
+      const checkUrl = `https://api.github.com/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(repoName)}`;
+      const checkRes = await fetch(checkUrl, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${cfg.token}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "AerosPay-V5-Archiver",
+        },
+        cache: "no-store",
+      });
+
+      if (checkRes.status === 404) {
+        const res = await createContinuationArchiveRepository({
+          repoKey,
+          repoName,
+          description: meta?.description ?? `Aeros Pay V5 Private Archive: ${repoKey}`,
+        });
+        if (res.ok) {
+          created.push(repoName);
+        }
+      }
+    } catch {
+      // Best-effort pre-provisioning; individual batch uploads still verify & retry
+    }
+  }
+
+  return { checked: GITHUB_ARCHIVE_REPO_KEYS_V5.length, created };
+}
+
+export {
+  GITHUB_ARCHIVE_REPO_KEYS,
+  GITHUB_ARCHIVE_REPOS,
+  DATASET_TO_GITHUB_REPO,
+  GITHUB_ARCHIVE_REPO_KEYS_V5,
+  GITHUB_ARCHIVE_REPOS_V5,
+  DATASET_TO_GITHUB_REPO_V5,
+};
+

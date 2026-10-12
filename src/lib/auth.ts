@@ -191,3 +191,18 @@ export const getOwnedCompanies = cache(async function getOwnedCompanies(
 ): Promise<Company[]> {
   return db.select().from(companies).where(eq(companies.ownerUserId, userId));
 });
+
+export type CurrentActor =
+  | { type: "GOVERNMENT"; government: Government }
+  | { type: "USER"; user: User };
+
+export async function getCurrentActor(): Promise<CurrentActor | null> {
+  const gov = await getCurrentGovernment();
+  if (gov) return { type: "GOVERNMENT", government: gov };
+  const user = await getCurrentUser();
+  if (user && effectiveUserStatus(user) !== "BANNED") {
+    return { type: "USER", user };
+  }
+  return null;
+}
+

@@ -4,8 +4,11 @@ import {
   getEconomicOverview,
   getGovernmentFeatureFlags,
 } from "@/lib/queries";
+import { listPublicJobs, listApplicationsForEmployer } from "@/lib/jobs";
+import { getPublicMediaFeed } from "@/lib/media";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { GovV4FeatureTogglesForm } from "@/components/v4/v4-forms";
+import { GovControlRoomV5Panel } from "@/components/v5/gov-control-room-v5-panel";
 
 /**
  * Control Room — the deepest administrative view (spec §10, §11).
@@ -19,11 +22,19 @@ export default async function ControlRoomPage({ searchParams }: PageProps<"/gov/
   const params = await searchParams;
   const q = typeof params.q === "string" ? params.q : "";
 
-  const [results, overview, flags] = await Promise.all([
-    q ? adminSearch(q) : null,
-    getEconomicOverview(),
-    getGovernmentFeatureFlags(),
-  ]);
+  const [results, overview, flags, allPublicJobs, govApplications, recentMediaPosts] =
+    await Promise.all([
+      q ? adminSearch(q) : null,
+      getEconomicOverview(),
+      getGovernmentFeatureFlags(),
+      listPublicJobs(50),
+      listApplicationsForEmployer({ employerType: "GOVERNMENT" }),
+      getPublicMediaFeed({ limit: 30, includeModeratedForGov: true }),
+    ]);
+
+  const govJobs = allPublicJobs
+    .filter((j) => j.job.employerType === "GOVERNMENT")
+    .map((j) => j.job);
 
   const totalHits = results
     ? results.users.length +
@@ -193,6 +204,12 @@ export default async function ControlRoomPage({ searchParams }: PageProps<"/gov/
         </p>
         <GovV4FeatureTogglesForm toggles={flags} />
       </section>
+
+      <GovControlRoomV5Panel
+        govJobs={govJobs}
+        govApplications={govApplications}
+        recentMediaPosts={recentMediaPosts}
+      />
 
       <section className="card p-5">
         <h2 className="mb-3 font-medium">Administrative areas</h2>

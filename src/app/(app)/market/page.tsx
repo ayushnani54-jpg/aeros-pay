@@ -2,29 +2,22 @@ import Link from "next/link";
 import { getActingContext } from "@/lib/auth";
 import { browseOffers, listOfferCategories, expireOverdueOrders } from "@/lib/marketplace";
 import { getLiveAd, runPromotionCharges } from "@/lib/promotions";
+import {
+  listPublicJobs,
+  listUserJobApplications,
+  listApplicationsForEmployer,
+} from "@/lib/jobs";
 import { MarketSearchBar } from "@/components/forms/marketplace-forms";
 import { PromotionSlot } from "@/components/promotion-slot";
+import {
+  JobsAndMarketplaceTabs,
+  type SerializedPublicJob,
+  type SerializedUserApplication,
+  type SerializedEmployerApplication,
+} from "@/components/v5/jobs-and-marketplace-panel";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { formatDate } from "@/lib/datetime";
 
-/**
- * THE MARKET — goods and services (V3, spec §§11,12,13).
- *
- * NAMING NOTE. `/marketplace` already existed in V2 and means something else
- * entirely: COMPANIES that are for sale, as whole businesses. This route is the
- * V3 goods-and-services market, so it lives at `/market` and calls itself
- * "Market" everywhere, and the two pages cross-link with an explicit sentence
- * saying which is which. The V2 company-sale flow is untouched.
- *
- * Search and filtering happen on the SERVER from the URL's search params, using
- * the indexes Phase A created, and nothing about a search is recorded: no
- * history table, no popular-terms counter, no per-viewer log (§13).
- *
- * This page is also one of the places the lazy promotion charge runs, because
- * the app has no scheduler yet. `runPromotionCharges` is one indexed read when
- * there is nothing to do, and today's charge is claimed by a single conditional
- * UPDATE, so a hundred page loads in a day still bill exactly once.
- */
 export default async function MarketPage({ searchParams }: PageProps<"/market">) {
   const ctx = await getActingContext();
   if (!ctx) return null;
@@ -44,14 +37,12 @@ export default async function MarketPage({ searchParams }: PageProps<"/market">)
     sortParam === "PRICE_ASC" || sortParam === "PRICE_DESC" ? sortParam : ("NEWEST" as const);
   const page = Math.max(Number.parseInt(str("page") || "1", 10) || 1, 1);
 
-  // Lazy maintenance. Both are cheap no-ops when there is nothing to do, and
-  // neither can double-charge or double-expire (see the libraries).
   await Promise.all([
     runPromotionCharges().catch(() => undefined),
     expireOverdueOrders().catch(() => undefined),
   ]);
 
-  const [result, categories, ad] = await Promise.all([
+  const [result, categories, ad, publicJobsRaw, myAppsRaw] = await Promise.all([
     browseOffers({
       q,
       category,
@@ -62,7 +53,64 @@ export default async function MarketPage({ searchParams }: PageProps<"/market">)
     }),
     listOfferCategories(),
     getLiveAd(),
+    listPublicJobs(60).catch(() => []),
+    listUserJobApplications(ctx.user.id).catch(() => []),
   ]);
+
+  // Fetch employer applications across all companies owned by this citizen
+  const employerAppsNested = await Promise.all(
+    ctx.availableCompanies.map((comp) =>
+      listApplicationsForEmployer({
+        employerType: "COMPANY",
+        employerCompanyId: comp.id,
+      }).catch(() => []),
+    ),
+  );
+  const employerAppsFlat = employerAppsNested.flat();
+
+  const serializedPublicJobs: SerializedPublicJob[] = publicJobsRaw.map((r) => ({
+    id: r.job.id,
+    jobNumber: r.job.jobNumber,
+    employerType: r.job.employerType,
+    employerCompanyId: r.job.employerCompanyId,
+    employerName: r.employerName,
+    employerHandle: r.employerHandle,
+    title: r.job.title,
+    category: r.job.category,
+    description: r.job.description,
+    requirements: r.job.requirements,
+    compensationAeros: r.job.compensationAeros,
+    status: r.job.status,
+    hiredUserId: r.job.hiredUserId,
+    createdAt: r.job.createdAt.toISOString(),
+  }));
+
+  const serializedMyApps: SerializedUserApplication[] = myAppsRaw.map((r) => ({
+    id: r.application.id,
+    jobId: r.job.id,
+    jobNumber: r.job.jobNumber,
+    jobTitle: r.job.title,
+    compensationAeros: r.job.compensationAeros,
+    jobStatus: r.job.status,
+    coverNote: r.application.coverNote,
+    status: r.application.status,
+    createdAt: r.application.createdAt.toISOString(),
+  }));
+
+  const serializedEmployerApps: SerializedEmployerApplication[] = employerAppsFlat.map((r) => ({
+    id: r.application.id,
+    jobId: r.job.id,
+    jobNumber: r.job.jobNumber,
+    jobTitle: r.job.title,
+    jobStatus: r.job.status,
+    compensationAeros: r.job.compensationAeros,
+    employerCompanyId: r.job.employerCompanyId,
+    applicantUsername: r.applicantUsername,
+    applicantDisplayName: r.applicantDisplayName,
+    coverNote: r.application.coverNote,
+    status: r.application.status,
+    createdAt: r.application.createdAt.toISOString(),
+  }));
 
   function pageHref(target: number): string {
     const sp = new URLSearchParams();
@@ -75,32 +123,8 @@ export default async function MarketPage({ searchParams }: PageProps<"/market">)
     return `/market?${sp.toString()}`;
   }
 
-  return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Market</h1>
-          <p className="mt-1 text-sm text-muted">
-            Goods and services offered by companies in the community. Ordering is free — you only
-            pay when the seller sends you an invoice.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Link href="/market/orders" className="btn btn-secondary text-sm">
-            My orders
-          </Link>
-          <Link href="/market/wanted" className="btn btn-secondary text-sm">
-            Wanted
-          </Link>
-          <Link href="/market/contracts" className="btn btn-secondary text-sm">
-            Contracts
-          </Link>
-          <Link href="/market/leaderboard" className="btn btn-secondary text-sm">
-            Leaderboard
-          </Link>
-        </div>
-      </div>
-
+  const publicListingsNode = (
+    <div className="space-y-4">
       <PromotionSlot ad={ad} />
 
       <MarketSearchBar
@@ -117,7 +141,8 @@ export default async function MarketPage({ searchParams }: PageProps<"/market">)
       {result.rows.length === 0 ? (
         <div className="card p-6">
           <p className="text-sm text-muted">
-            Nothing here yet. {ctx.availableCompanies.length > 0 ? (
+            Nothing here yet.{" "}
+            {ctx.availableCompanies.length > 0 ? (
               <>
                 <Link href="/my-company/offers" className="underline">
                   Add a listing
@@ -132,16 +157,16 @@ export default async function MarketPage({ searchParams }: PageProps<"/market">)
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
           {result.rows.map(({ offer, companyName, companyUsername }) => (
-            <div key={offer.id} className="card p-5">
+            <div key={offer.id} className="card p-4 sm:p-5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <Link
                     href={`/market/offers/${offer.id}`}
-                    className="font-medium hover:underline"
+                    className="font-semibold hover:underline"
                   >
                     {offer.title}
                   </Link>
-                  <p className="text-sm text-muted">
+                  <p className="text-xs text-muted sm:text-sm">
                     {companyName} (@{companyUsername})
                   </p>
                   <p className="mt-1 text-xs text-muted">{offer.category}</p>
@@ -161,7 +186,15 @@ export default async function MarketPage({ searchParams }: PageProps<"/market">)
                 </div>
               </div>
               <p className="mt-3 line-clamp-3 text-sm">{offer.description}</p>
-              <p className="mt-2 text-xs text-muted">Listed {formatDate(offer.createdAt)}</p>
+              <div className="mt-3 flex items-center justify-between border-t border-border pt-2.5 text-xs text-muted">
+                <span>Listed {formatDate(offer.createdAt)}</span>
+                <Link
+                  href={`/market/offers/${offer.id}`}
+                  className="font-semibold text-foreground hover:underline"
+                >
+                  View &amp; Order →
+                </Link>
+              </div>
             </div>
           ))}
         </div>
@@ -190,12 +223,28 @@ export default async function MarketPage({ searchParams }: PageProps<"/market">)
       )}
 
       <p className="text-xs text-muted">
-        Looking to buy a whole business rather than goods?{" "}
+        Looking to buy or sell an entire business?{" "}
         <Link href="/marketplace" className="underline">
           Companies for sale
         </Link>{" "}
-        is a different page.
+        is available separately.
       </p>
     </div>
+  );
+
+  return (
+    <JobsAndMarketplaceTabs
+      publicListingsNode={publicListingsNode}
+      publicJobs={serializedPublicJobs}
+      myApplications={serializedMyApps}
+      employerApplications={serializedEmployerApps}
+      ownedCompanies={ctx.availableCompanies.map((c) => ({
+        id: c.id,
+        name: c.name,
+        username: c.username,
+        balance: c.balance,
+      }))}
+      currentUserId={ctx.user.id}
+    />
   );
 }

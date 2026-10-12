@@ -71,6 +71,13 @@
       "when": 1791712000000,
       "tag": "0009_v4_1_github_archive_and_short_selling",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791800000000,
+      "tag": "0010_v5_upgrade",
+      "breakpoints": true
     }
   ]
 }

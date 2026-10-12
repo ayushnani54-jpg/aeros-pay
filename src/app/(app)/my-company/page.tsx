@@ -17,6 +17,11 @@ import { getRequestOrigin } from "@/lib/origin";
 import { getCompanyRatingSummary } from "@/lib/ratings";
 import { RatingSummaryLine } from "@/components/rating-stars";
 import { ExportLink } from "@/components/forms/export-forms";
+import { listPartnershipsForCompany } from "@/lib/partnerships";
+import {
+  CompanyPartnershipsPanel,
+  type SerializedCompanyPartnership,
+} from "@/components/v5/company-partnerships-panel";
 
 export default async function MyCompanyPage() {
   const ctx = await getActingContext();
@@ -96,17 +101,58 @@ export default async function MyCompanyPage() {
 
   await runLoanMaintenance().catch(() => undefined);
 
-  const [stats, recentTx, offers, loans, taxRateBp, orderCounts, ratingSummary, origin] =
-    await Promise.all([
-      getCompanyDashboardStats(company.id),
-      getTransactionsForWallet(company.id, "COMPANY", 8),
-      getPendingOffersForOwner(ctx.user.id),
-      getLoansForCompany(company.id),
-      resolveCompanyTaxRateBp(company),
-      getCompanyOrderCounts(company.id),
-      getCompanyRatingSummary(company.id),
-      getRequestOrigin(),
-    ]);
+  const [
+    stats,
+    recentTx,
+    offers,
+    loans,
+    taxRateBp,
+    orderCounts,
+    ratingSummary,
+    origin,
+    partnershipsRaw,
+  ] = await Promise.all([
+    getCompanyDashboardStats(company.id),
+    getTransactionsForWallet(company.id, "COMPANY", 8),
+    getPendingOffersForOwner(ctx.user.id),
+    getLoansForCompany(company.id),
+    resolveCompanyTaxRateBp(company),
+    getCompanyOrderCounts(company.id),
+    getCompanyRatingSummary(company.id),
+    getRequestOrigin(),
+    listPartnershipsForCompany(company.id).catch(() => []),
+  ]);
+
+  const serializedPartnerships: SerializedCompanyPartnership[] = partnershipsRaw.map((r) => ({
+    id: r.partnership.id,
+    partnershipNumber: r.partnership.partnershipNumber,
+    initiatorCompanyId: r.partnership.initiatorCompanyId,
+    initiatorName: r.initiatorName,
+    initiatorUsername: r.initiatorUsername,
+    partnerCompanyId: r.partnership.partnerCompanyId,
+    partnerName: r.partnerName,
+    partnerUsername: r.partnerUsername,
+    title: r.partnership.title,
+    termsDescription: r.partnership.termsDescription,
+    initiatorShareBp: r.partnership.initiatorShareBp,
+    partnerShareBp: r.partnership.partnerShareBp,
+    govTaxRateBp: r.partnership.govTaxRateBp,
+    totalSettledVolumeAeros: r.partnership.totalSettledVolumeAeros,
+    status: r.partnership.status,
+    rejectionReason: r.partnership.rejectionReason,
+    createdAt: r.partnership.createdAt.toISOString(),
+    settlements: r.settlements.map((s) => ({
+      id: s.id,
+      settlementNumber: s.settlementNumber,
+      grossAmount: s.grossAmount,
+      initiatorPayout: s.initiatorPayout,
+      partnerPayout: s.partnerPayout,
+      govTaxDeducted: s.govTaxDeducted,
+      referenceNote: s.referenceNote,
+      partnerTxRef: s.partnerTxRef,
+      createdAt: s.createdAt.toISOString(),
+    })),
+  }));
 
   const status = effectiveCompanyStatus(company);
   const activeLoan = loans.find((l) =>
@@ -172,10 +218,19 @@ export default async function MyCompanyPage() {
               : "Orders"
           }
         />
+        <NavCard href="/market" label="Citizen Jobs Board" />
         <NavCard href="/my-company/promotions" label="Promotions" />
         <NavCard href="/my-company/loans" label="Loans" />
         <NavCard href="/my-company/sale" label="Sell company" />
       </section>
+
+      {/* V5 Company-to-Company Partnerships & 50/50 Revenue Settlement */}
+      <CompanyPartnershipsPanel
+        activeCompanyId={company.id}
+        activeCompanyName={company.name}
+        activeCompanyUsername={company.username}
+        partnerships={serializedPartnerships}
+      />
 
       {orderCounts.pending > 0 && (
         <section className="card border-[#111111] p-5">

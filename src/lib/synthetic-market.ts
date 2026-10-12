@@ -4,15 +4,19 @@ import { db } from "@/db/client";
 import {
   archiveBatches,
   government,
+  leverageRequests,
   marketCandles,
   marketOrders,
   marketPositions,
   marketState,
+  marketTradePositions,
   users,
+  type LeverageRequest,
   type MarketCandle,
   type MarketOrder,
   type MarketPosition,
   type MarketState,
+  type MarketTradePosition,
 } from "@/db/schema";
 import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { recordAudit } from "./audit";
@@ -21,7 +25,10 @@ import { governmentWallet, userWallet } from "./wallets";
 import { canUserSend } from "./status";
 import {
   CURRENCY_NAME,
+  DEFAULT_LEVERAGE,
+  LEVERAGE_LEVELS,
   MARKET_METHODOLOGY_VERSION,
+  MAX_LEVERAGE,
   type MarketTimeframe,
 } from "./constants";
 
@@ -428,6 +435,61 @@ async function advanceLockedMarketStateInTx(
   const targetBucketMs = targetBucket5m.getTime();
 
   if (targetBucketMs <= currentBucketMs) {
+    const [gov] = await tx
+      .select({ interval: government.marketUpdateIntervalMinutes })
+      .from(government)
+      .limit(1);
+    const intervalMinutes = gov?.interval === 5 ? 5 : 1;
+    const intervalMs = intervalMinutes * 60 * 1000;
+    const nowTickMs = Math.floor(now.getTime() / intervalMs) * intervalMs;
+    const lastTickMs = Math.floor(state.updatedAt.getTime() / intervalMs) * intervalMs;
+
+    if (intervalMinutes === 1 && nowTickMs > lastTickMs) {
+      const tickStep = computeDeterministicStep({
+        openPrice: state.currentPrice,
+        minPrice: state.minPrice,
+        maxPrice: state.maxPrice,
+        baseVolatilityBp: Math.max(20, Math.round(state.baseVolatilityBp / 2)),
+        demandSensitivityBp: state.demandSensitivityBp,
+        maxStepChangeBp: state.maxStepChangeBp,
+        netOrderFlowUnits: state.netOrderFlowUnits,
+        activeBucketTraders: state.activeBucketTraders,
+        seedKey: state.seedKey,
+        bucket5mMs: nowTickMs,
+      });
+
+      await upsertCandleRollupsInTx(tx, {
+        bucket5m: targetBucket5m,
+        openPrice: state.currentPrice,
+        highPrice: tickStep.highPrice,
+        lowPrice: tickStep.lowPrice,
+        closePrice: tickStep.closePrice,
+        volumeUnitsDelta: 0,
+        volumeAerosDelta: 0,
+        tradeCountDelta: 0,
+        buyUnitsDelta: 0,
+        sellUnitsDelta: 0,
+        isHighVolatility: tickStep.isHighVolatility,
+        methodologyVersion: state.methodologyVersion,
+      });
+
+      const [updatedTick] = await tx
+        .update(marketState)
+        .set({
+          previousPrice: state.currentPrice,
+          currentPrice: tickStep.closePrice,
+          high24hPrice: Math.max(state.high24hPrice, tickStep.highPrice),
+          low24hPrice: Math.min(state.low24hPrice, tickStep.lowPrice),
+          netOrderFlowUnits: 0,
+          activeBucketTraders: 0,
+          updatedAt: now,
+        })
+        .where(eq(marketState.id, 1))
+        .returning();
+
+      return updatedTick;
+    }
+
     return state;
   }
 
@@ -517,12 +579,9 @@ export async function syncMarketClock(): Promise<MarketState> {
 }
 
 /**
- * Pure read-only chart query once initialized. Refreshing the page or switching
- * timeframes (`5m`, `15m`, `1h`) never advances or mutates the market!
- *
- * V4.1: Supports larger window limits (`12..500`), optional `before` pagination
- * cursor, and automatic fallback merge of archived candles from `archive_batches`
- * when historical windows reach into cleared candle batches.
+ * Chart query with V5 interval boundary check:
+ * - Only advances when a real 1m/5m interval boundary has been crossed.
+ * - Refreshing the page within the same interval is 100% read-only and never moves the price.
  */
 export async function getMarketChartData(
   timeframe: MarketTimeframe = "15m",
@@ -542,7 +601,25 @@ export async function getMarketChartData(
     low24h: number;
   };
 }> {
-  const state = await ensureMarketInitialized();
+  let state = await ensureMarketInitialized();
+  const now = new Date();
+  const now5m = alignBucketStart(now, "5m");
+
+  if (now5m.getTime() > alignBucketStart(state.activeBucket5m, "5m").getTime()) {
+    state = await syncMarketClock();
+  } else {
+    const [gov] = await db
+      .select({ interval: government.marketUpdateIntervalMinutes })
+      .from(government)
+      .limit(1);
+    const intervalMinutes = gov?.interval === 5 ? 5 : 1;
+    const intervalMs = intervalMinutes * 60 * 1000;
+    const nowTickMs = Math.floor(now.getTime() / intervalMs) * intervalMs;
+    const lastTickMs = Math.floor(state.updatedAt.getTime() / intervalMs) * intervalMs;
+    if (nowTickMs > lastTickMs) {
+      state = await syncMarketClock();
+    }
+  }
   const safeLimit = Math.max(12, Math.min(500, Math.trunc(limit)));
 
   const whereCond = before
@@ -1294,3 +1371,493 @@ export async function getRecentMarketOrdersForGov(limit = 100): Promise<
     .orderBy(desc(marketOrders.createdAt))
     .limit(limit);
 }
+
+// ===========================================================================
+// V5 — HEDGE-STYLE INDEPENDENT POSITIONS, EXPLICIT CLOSING & LEVERAGE SYSTEM
+// ===========================================================================
+
+export function calculateHedgePositionPnl(params: {
+  direction: "LONG" | "SHORT";
+  entryPrice: number;
+  currentPrice: number;
+  quantity: number;
+  marginLocked: number;
+}): {
+  unrealizedPnl: number;
+  estimatedPayout: number;
+  roiPercent: string;
+} {
+  const unrealizedPnl =
+    params.direction === "LONG"
+      ? (params.currentPrice - params.entryPrice) * params.quantity
+      : (params.entryPrice - params.currentPrice) * params.quantity;
+  const estimatedPayout = Math.max(0, params.marginLocked + unrealizedPnl);
+  const roiNum =
+    params.marginLocked > 0 ? (unrealizedPnl / params.marginLocked) * 100 : 0;
+  return {
+    unrealizedPnl,
+    estimatedPayout,
+    roiPercent: `${roiNum >= 0 ? "+" : ""}${roiNum.toFixed(2)}%`,
+  };
+}
+
+/**
+ * Opens an independent LONG (via BUY) or SHORT (via SELL) hedge position.
+ * Never auto-nets or closes existing opposing positions.
+ */
+export async function openHedgePosition(params: {
+  userId: string;
+  direction: "LONG" | "SHORT";
+  quantity: number;
+  leverage?: number;
+  expectedPrice: number;
+  maxSlippageBp?: number;
+  idempotencyKey?: string;
+}): Promise<MarketTradePosition> {
+  await ensureMarketInitialized();
+  const leverage = params.leverage ?? DEFAULT_LEVERAGE;
+  if (!(LEVERAGE_LEVELS as readonly number[]).includes(leverage)) {
+    throw new MarketError("Invalid leverage level. Supported levels: 2x, 4x, 8x, 10x.");
+  }
+
+  return db.transaction(async (tx) => {
+    const [gov] = await tx.select().from(government).limit(1);
+    if (!gov || !gov.marketEnabled || !gov.tradingEnabled) {
+      throw new MarketError("Trading is currently disabled by the Government.");
+    }
+
+    const [user] = await tx
+      .select()
+      .from(users)
+      .where(eq(users.id, params.userId))
+      .for("update");
+    if (!user || !canUserSend(user)) {
+      throw new MarketError("Account is not eligible to trade.");
+    }
+
+    if (leverage > user.maxLeverage) {
+      throw new MarketError(
+        `Requested leverage (${leverage}x) exceeds your approved maximum (${user.maxLeverage}x). Request a leverage upgrade first.`,
+      );
+    }
+
+    const [lockedState] = await tx
+      .select()
+      .from(marketState)
+      .where(eq(marketState.id, 1))
+      .for("update");
+    const state = await advanceLockedMarketStateInTx(tx, lockedState, new Date());
+
+    if (params.direction === "SHORT" && !state.shortSellingEnabled) {
+      throw new MarketError("Short selling is currently disabled by the Government.");
+    }
+
+    if (params.quantity > state.maxOrderUnits) {
+      throw new MarketError(`Maximum order quantity is ${state.maxOrderUnits} AMI units.`);
+    }
+
+    const executionPrice = state.currentPrice;
+    const maxSlip = params.maxSlippageBp ?? 200;
+    const priceDiffBp = Math.round(
+      (Math.abs(executionPrice - params.expectedPrice) * 10000) /
+        Math.max(1, params.expectedPrice),
+    );
+    if (priceDiffBp > maxSlip) {
+      throw new MarketError(
+        `Price moved beyond slippage tolerance (expected ${params.expectedPrice}, live ${executionPrice}).`,
+      );
+    }
+
+    const costBasis = params.quantity * executionPrice;
+    const marginLocked = Math.max(1, Math.ceil(costBasis / leverage));
+
+    if (user.balance < marginLocked) {
+      throw new MarketError(
+        `Insufficient Aeros balance for margin. Required: ${marginLocked} ${CURRENCY_NAME} (${leverage}x leverage on ${costBasis} ${CURRENCY_NAME} notional).`,
+      );
+    }
+
+    const positionNumber = `POS-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 899)}`;
+
+    const transferResult = await transferInTx(tx, {
+      from: userWallet(user.id),
+      to: governmentWallet(gov.id),
+      amount: marginLocked,
+      type: params.direction === "LONG" ? "MARKET_TRADE_BUY" : "MARKET_TRADE_SELL",
+      reason: `Open ${params.direction} position ${positionNumber}: ${params.quantity} AMI @ ${executionPrice} (${leverage}x leverage)`,
+      forcedTaxRateBp: 0,
+    });
+
+    const [createdPos] = await tx
+      .insert(marketTradePositions)
+      .values({
+        positionNumber,
+        userId: user.id,
+        direction: params.direction,
+        status: "OPEN",
+        quantity: params.quantity,
+        entryPrice: executionPrice,
+        leverage,
+        marginLocked,
+        costBasis,
+        openTxRef: transferResult.txRef,
+      })
+      .returning();
+
+    // Update demand flow in current bucket
+    const flowDelta = params.direction === "LONG" ? params.quantity : -params.quantity;
+    await tx
+      .update(marketState)
+      .set({
+        netOrderFlowUnits: state.netOrderFlowUnits + flowDelta,
+        activeBucketTraders: state.activeBucketTraders + 1,
+      })
+      .where(eq(marketState.id, 1));
+
+    await recordAudit(tx, {
+      action: `HEDGE_POSITION_OPEN_${params.direction}`,
+      actorType: "USER",
+      actorId: user.id,
+      actorLabel: user.username,
+      targetType: "MARKET_TRADE_POSITION",
+      targetId: createdPos.id,
+      previousValue: `${executionPrice} ${CURRENCY_NAME}`,
+      newValue: `${positionNumber}: ${params.direction} ${params.quantity} AMI @ ${executionPrice} (${leverage}x, margin=${marginLocked})`,
+    });
+
+    return createdPos;
+  });
+}
+
+/**
+ * Explicitly closes a specific open hedge position by its ID.
+ * Does not affect any other open LONG or SHORT positions.
+ */
+export async function closeHedgePosition(params: {
+  userId: string;
+  positionId: string;
+}): Promise<MarketTradePosition> {
+  await ensureMarketInitialized();
+
+  return db.transaction(async (tx) => {
+    const [pos] = await tx
+      .select()
+      .from(marketTradePositions)
+      .where(eq(marketTradePositions.id, params.positionId))
+      .for("update");
+
+    if (!pos) {
+      throw new MarketError("Position not found.");
+    }
+    if (pos.userId !== params.userId) {
+      throw new MarketError("You do not own this position.");
+    }
+    if (pos.status !== "OPEN") {
+      throw new MarketError("This position is already closed.");
+    }
+
+    const [user] = await tx
+      .select()
+      .from(users)
+      .where(eq(users.id, params.userId))
+      .for("update");
+    if (!user) {
+      throw new MarketError("User account not found.");
+    }
+
+    const [lockedState] = await tx
+      .select()
+      .from(marketState)
+      .where(eq(marketState.id, 1))
+      .for("update");
+    const state = await advanceLockedMarketStateInTx(tx, lockedState, new Date());
+    const closePrice = state.currentPrice;
+
+    const { unrealizedPnl, estimatedPayout } = calculateHedgePositionPnl({
+      direction: pos.direction,
+      entryPrice: pos.entryPrice,
+      currentPrice: closePrice,
+      quantity: pos.quantity,
+      marginLocked: pos.marginLocked,
+    });
+
+    const [gov] = await tx.select().from(government).for("update").limit(1);
+    if (!gov) {
+      throw new MarketError("Government treasury not initialized.");
+    }
+    const safePayout = Math.min(estimatedPayout, gov.balance);
+
+    let closeTxRef: string | null = null;
+    if (safePayout > 0) {
+      const transferRes = await transferInTx(tx, {
+        from: governmentWallet(gov.id),
+        to: userWallet(user.id),
+        amount: safePayout,
+        type: "MARKET_TRADE_SELL",
+        reason: `Close ${pos.direction} position ${pos.positionNumber} @ ${closePrice} (P&L: ${unrealizedPnl >= 0 ? "+" : ""}${unrealizedPnl} ${CURRENCY_NAME})`,
+        forcedTaxRateBp: 0,
+      });
+      closeTxRef = transferRes.txRef;
+    }
+
+    const [closedPos] = await tx
+      .update(marketTradePositions)
+      .set({
+        status: "CLOSED",
+        closePrice,
+        realizedPnl: unrealizedPnl,
+        closeTxRef,
+        closedAt: new Date(),
+      })
+      .where(eq(marketTradePositions.id, pos.id))
+      .returning();
+
+    await recordAudit(tx, {
+      action: `HEDGE_POSITION_CLOSE_${pos.direction}`,
+      actorType: "USER",
+      actorId: user.id,
+      actorLabel: user.username,
+      targetType: "MARKET_TRADE_POSITION",
+      targetId: pos.id,
+      previousValue: `OPEN @ ${pos.entryPrice}`,
+      newValue: `CLOSED @ ${closePrice} (P&L: ${unrealizedPnl}, Payout: ${safePayout})`,
+    });
+
+    return closedPos;
+  });
+}
+
+export async function getUserHedgePositions(userId: string): Promise<{
+  openPositions: MarketTradePosition[];
+  closedPositions: MarketTradePosition[];
+  leverageRequests: LeverageRequest[];
+}> {
+  const [all, reqs] = await Promise.all([
+    db
+      .select()
+      .from(marketTradePositions)
+      .where(eq(marketTradePositions.userId, userId))
+      .orderBy(desc(marketTradePositions.openedAt))
+      .limit(100),
+    db
+      .select()
+      .from(leverageRequests)
+      .where(eq(leverageRequests.userId, userId))
+      .orderBy(desc(leverageRequests.createdAt))
+      .limit(20),
+  ]);
+
+  return {
+    openPositions: all.filter((p) => p.status === "OPEN"),
+    closedPositions: all.filter((p) => p.status === "CLOSED"),
+    leverageRequests: reqs,
+  };
+}
+
+/**
+ * Citizen requests the next eligible leverage level (2x -> 4x -> 8x -> 10x).
+ */
+export async function requestLeverageUpgrade(params: {
+  userId: string;
+  requestedLeverage: number;
+}): Promise<LeverageRequest> {
+  return db.transaction(async (tx) => {
+    const [user] = await tx
+      .select()
+      .from(users)
+      .where(eq(users.id, params.userId))
+      .for("update");
+    if (!user) throw new MarketError("User not found.");
+
+    if (user.maxLeverage >= MAX_LEVERAGE) {
+      throw new MarketError("You have already reached the maximum leverage level (10x).");
+    }
+
+    const nextExpected =
+      user.maxLeverage === 2 ? 4 : user.maxLeverage === 4 ? 8 : 10;
+    if (params.requestedLeverage !== nextExpected) {
+      throw new MarketError(
+        `Structured leverage progression requires requesting ${nextExpected}x next (current: ${user.maxLeverage}x).`,
+      );
+    }
+
+    const [existingPending] = await tx
+      .select()
+      .from(leverageRequests)
+      .where(
+        and(
+          eq(leverageRequests.userId, user.id),
+          eq(leverageRequests.status, "PENDING"),
+        ),
+      )
+      .limit(1);
+
+    if (existingPending) {
+      throw new MarketError("You already have a pending leverage request awaiting Government review.");
+    }
+
+    const closedPositions = await tx
+      .select()
+      .from(marketTradePositions)
+      .where(
+        and(
+          eq(marketTradePositions.userId, user.id),
+          eq(marketTradePositions.status, "CLOSED"),
+        ),
+      );
+
+    const totalClosed = closedPositions.length;
+    const wins = closedPositions.filter((p) => p.realizedPnl > 0).length;
+    const totalPnl = closedPositions.reduce((s, p) => s + p.realizedPnl, 0);
+    const totalVolume = closedPositions.reduce((s, p) => s + p.costBasis, 0);
+
+    const [created] = await tx
+      .insert(leverageRequests)
+      .values({
+        userId: user.id,
+        requestedLeverage: params.requestedLeverage,
+        currentLeverage: user.maxLeverage,
+        status: "PENDING",
+        userStatsSnapshot: {
+          closedPositionsCount: totalClosed,
+          winRatePct: totalClosed > 0 ? Math.round((wins / totalClosed) * 100) : 0,
+          totalRealizedPnl: totalPnl,
+          totalVolumeAeros: totalVolume,
+          currentBalance: user.balance,
+        },
+      })
+      .returning();
+
+    await recordAudit(tx, {
+      action: "LEVERAGE_UPGRADE_REQUESTED",
+      actorType: "USER",
+      actorId: user.id,
+      actorLabel: user.username,
+      targetType: "LEVERAGE_REQUEST",
+      targetId: created.id,
+      previousValue: `${user.maxLeverage}x`,
+      newValue: `Requested ${params.requestedLeverage}x`,
+    });
+
+    return created;
+  });
+}
+
+/**
+ * Government reviews and approves or rejects a citizen's leverage request.
+ */
+export async function reviewLeverageRequest(params: {
+  requestId: string;
+  decision: "APPROVE" | "REJECT";
+  rejectionReason?: string;
+  adminNotes?: string;
+  govId: string;
+  govUsername: string;
+}): Promise<LeverageRequest> {
+  return db.transaction(async (tx) => {
+    const [req] = await tx
+      .select()
+      .from(leverageRequests)
+      .where(eq(leverageRequests.id, params.requestId))
+      .for("update");
+
+    if (!req) throw new MarketError("Leverage request not found.");
+    if (req.status !== "PENDING") {
+      throw new MarketError("This leverage request has already been reviewed.");
+    }
+
+    const newStatus = params.decision === "APPROVE" ? "APPROVED" : "REJECTED";
+
+    if (params.decision === "APPROVE") {
+      await tx
+        .update(users)
+        .set({ maxLeverage: req.requestedLeverage })
+        .where(eq(users.id, req.userId));
+    }
+
+    const [updated] = await tx
+      .update(leverageRequests)
+      .set({
+        status: newStatus,
+        rejectionReason: params.rejectionReason || null,
+        adminNotes: params.adminNotes || null,
+        reviewedByGovId: params.govId,
+        reviewedAt: new Date(),
+      })
+      .where(eq(leverageRequests.id, req.id))
+      .returning();
+
+    await recordAudit(tx, {
+      action: `LEVERAGE_REQUEST_${newStatus}`,
+      actorType: "GOVERNMENT",
+      actorId: params.govId,
+      actorLabel: params.govUsername,
+      targetType: "LEVERAGE_REQUEST",
+      targetId: req.id,
+      previousValue: `${req.currentLeverage}x (PENDING)`,
+      newValue: `${req.requestedLeverage}x (${newStatus})`,
+      metadata: {
+        rejectionReason: params.rejectionReason,
+        adminNotes: params.adminNotes,
+      },
+    });
+
+    return updated;
+  });
+}
+
+export async function getLeverageRequestsForGov(): Promise<
+  Array<{
+    request: LeverageRequest;
+    username: string;
+    displayName: string;
+    currentMaxLeverage: number;
+    balance: number;
+  }>
+> {
+  return db
+    .select({
+      request: leverageRequests,
+      username: users.username,
+      displayName: users.displayName,
+      currentMaxLeverage: users.maxLeverage,
+      balance: users.balance,
+    })
+    .from(leverageRequests)
+    .innerJoin(users, eq(users.id, leverageRequests.userId))
+    .orderBy(desc(leverageRequests.createdAt))
+    .limit(100);
+}
+
+/**
+ * Government updates the market price update interval (1 minute or 5 minutes).
+ */
+export async function updateMarketIntervalSetting(params: {
+  intervalMinutes: 1 | 5;
+  govId: string;
+  govUsername: string;
+}): Promise<number> {
+  return db.transaction(async (tx) => {
+    const [gov] = await tx.select().from(government).for("update").limit(1);
+    if (!gov) throw new MarketError("Government singleton not found.");
+
+    await tx
+      .update(government)
+      .set({ marketUpdateIntervalMinutes: params.intervalMinutes })
+      .where(eq(government.id, gov.id));
+
+    await recordAudit(tx, {
+      action: "MARKET_UPDATE_INTERVAL_CHANGED",
+      actorType: "GOVERNMENT",
+      actorId: params.govId,
+      actorLabel: params.govUsername,
+      targetType: "GOVERNMENT",
+      targetId: gov.id,
+      previousValue: `${gov.marketUpdateIntervalMinutes}m`,
+      newValue: `${params.intervalMinutes}m`,
+    });
+
+    return params.intervalMinutes;
+  });
+}
+

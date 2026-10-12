@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "V4.1",
+  "repoKey": "aeros-archive-exchange",
+  "datasets": [
+    "closed_exchange_purchases"
+  ]
+}

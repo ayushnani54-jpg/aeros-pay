@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "V4.1",
+  "repoKey": "aeros-archive-marketplace-orders",
+  "datasets": [
+    "completed_marketplace_orders"
+  ]
+}

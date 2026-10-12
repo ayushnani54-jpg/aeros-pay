@@ -45,10 +45,22 @@ import {
   WANTED_MAX_BUDGET,
   WANTED_RESPONSE_MAX_LENGTH,
   RATING_COMMENT_MAX_LENGTH,
-  RATING_MAX_STARS,
   RATING_MIN_STARS,
+  RATING_MAX_STARS,
   ARCHIVE_CLEAR_CONFIRM_PHRASE,
   ARCHIVE_DATASET_KEYS,
+  // --- V5 ---
+  DEFAULT_LEVERAGE,
+  JOB_DESCRIPTION_MAX_LENGTH,
+  JOB_MAX_COMPENSATION,
+  JOB_REQUIREMENTS_MAX_LENGTH,
+  JOB_TITLE_MAX_LENGTH,
+  LEVERAGE_LEVELS,
+  MARKET_UPDATE_INTERVALS,
+  MEDIA_COMMENT_MAX_LENGTH,
+  MEDIA_POST_MAX_LENGTH,
+  PARTNERSHIP_TERMS_MAX_LENGTH,
+  PARTNERSHIP_TITLE_MAX_LENGTH,
 } from "./constants";
 
 // Normalizes user-typed usernames to their canonical lowercase form before
@@ -1112,6 +1124,134 @@ export const downloadAllArchivesSchema = z.object({
   dateFrom: z.string().trim().optional().or(z.literal("")),
   dateTo: z.string().trim().optional().or(z.literal("")),
 });
+
+// ---------------------------------------------------------------------------
+// V5 — Validation Schemas (Trading, Leverage, Jobs, Partnerships, Media, Archival)
+// ---------------------------------------------------------------------------
+
+export const marketIntervalConfigSchema = z.object({
+  marketUpdateIntervalMinutes: z.coerce
+    .number()
+    .int()
+    .refine(
+      (v) => (MARKET_UPDATE_INTERVALS as readonly number[]).includes(v),
+      "Market update interval must be 1 or 5 minutes.",
+    ),
+});
+
+export const placeHedgePositionSchema = z.object({
+  direction: z.enum(["LONG", "SHORT"]),
+  quantity: z.coerce
+    .number()
+    .int("Quantity must be a whole number.")
+    .positive("Quantity must be at least 1 unit.")
+    .max(10_000, "Maximum order is 10,000 units."),
+  leverage: z.coerce
+    .number()
+    .int()
+    .refine(
+      (v) => (LEVERAGE_LEVELS as readonly number[]).includes(v),
+      "Leverage must be 2, 4, 8, or 10.",
+    )
+    .default(DEFAULT_LEVERAGE),
+  expectedPrice: z.coerce.number().int().positive("Expected price must be positive."),
+  maxSlippageBp: z.coerce.number().int().min(0).max(1000).default(200),
+});
+
+export const closeHedgePositionSchema = z.object({
+  positionId: z.string().uuid("Invalid position ID."),
+});
+
+export const requestLeverageSchema = z.object({
+  requestedLeverage: z.coerce
+    .number()
+    .int()
+    .refine((v) => [4, 8, 10].includes(v), "Target leverage must be 4x, 8x, or 10x."),
+});
+
+export const reviewLeverageRequestSchema = z.object({
+  requestId: z.string().uuid("Invalid request ID."),
+  decision: z.enum(["APPROVE", "REJECT"]),
+  rejectionReason: z.string().trim().max(1000).optional().or(z.literal("")),
+  adminNotes: z.string().trim().max(1000).optional().or(z.literal("")),
+});
+
+export const createJobSchema = z.object({
+  title: z.string().trim().min(3, "Title must be at least 3 characters.").max(JOB_TITLE_MAX_LENGTH),
+  category: z.string().trim().min(2, "Category is required.").max(64),
+  description: z.string().trim().min(10, "Description must be at least 10 characters.").max(JOB_DESCRIPTION_MAX_LENGTH),
+  requirements: z.string().trim().min(5, "Requirements must be at least 5 characters.").max(JOB_REQUIREMENTS_MAX_LENGTH),
+  compensationAeros: z.coerce
+    .number()
+    .int("Compensation must be a whole number.")
+    .positive("Compensation must be at least 1 Aeros.")
+    .max(JOB_MAX_COMPENSATION, "Compensation exceeds maximum limit."),
+});
+
+export const applyForJobSchema = z.object({
+  jobId: z.string().uuid("Invalid job ID."),
+  coverNote: z.string().trim().min(5, "Cover note is required.").max(2000),
+});
+
+export const reviewJobApplicationSchema = z.object({
+  applicationId: z.string().uuid("Invalid application ID."),
+  decision: z.enum(["ACCEPT", "REJECT"]),
+});
+
+export const completeJobSchema = z.object({
+  jobId: z.string().uuid("Invalid job ID."),
+});
+
+export const proposePartnershipSchema = z.object({
+  initiatorCompanyId: z.string().uuid("Invalid initiating company ID."),
+  partnerCompanyUsername: recipientHandleSchema,
+  title: z.string().trim().min(3, "Title must be at least 3 characters.").max(PARTNERSHIP_TITLE_MAX_LENGTH),
+  termsDescription: z.string().trim().min(10, "Terms description must be at least 10 characters.").max(PARTNERSHIP_TERMS_MAX_LENGTH),
+  initiatorShareBp: z.coerce.number().int().min(1000).max(9000).default(5000),
+  partnerShareBp: z.coerce.number().int().min(1000).max(9000).default(5000),
+}).refine((v) => v.initiatorShareBp + v.partnerShareBp === 10000, {
+  message: "Shares must sum to 100% (10,000 basis points).",
+  path: ["partnerShareBp"],
+});
+
+export const respondPartnershipSchema = z.object({
+  partnershipId: z.string().uuid("Invalid partnership ID."),
+  decision: z.enum(["ACCEPT", "REJECT"]),
+  rejectionReason: z.string().trim().max(1000).optional().or(z.literal("")),
+});
+
+export const reviewGovernmentPartnershipSchema = z.object({
+  partnershipId: z.string().uuid("Invalid partnership ID."),
+  decision: z.enum(["APPROVE", "REJECT"]),
+  govTaxRateBp: z.coerce.number().int().min(0).max(5000).default(500),
+  rejectionReason: z.string().trim().max(1000).optional().or(z.literal("")),
+});
+
+export const settlePartnershipSchema = z.object({
+  partnershipId: z.string().uuid("Invalid partnership ID."),
+  grossAmount: z.coerce.number().int().positive("Gross amount must be at least 1 Aeros."),
+  referenceNote: z.string().trim().min(2, "Reference note is required.").max(500),
+});
+
+export const createMediaPostSchema = z.object({
+  content: z.string().trim().min(1, "Post cannot be empty.").max(MEDIA_POST_MAX_LENGTH, `Post cannot exceed ${MEDIA_POST_MAX_LENGTH} characters.`),
+});
+
+export const createMediaCommentSchema = z.object({
+  postId: z.string().uuid("Invalid post ID."),
+  content: z.string().trim().min(1, "Comment cannot be empty.").max(MEDIA_COMMENT_MAX_LENGTH, `Comment cannot exceed ${MEDIA_COMMENT_MAX_LENGTH} characters.`),
+});
+
+export const moderateMediaPostSchema = z.object({
+  postId: z.string().uuid("Invalid post ID."),
+  action: z.enum(["FLAG", "HIDE", "RESTORE"]),
+  reason: z.string().trim().max(1000).optional().or(z.literal("")),
+});
+
+export const startManualArchiveJobSchema = z.object({
+  category: z.string().trim().optional().or(z.literal("")),
+});
+
 
 
 

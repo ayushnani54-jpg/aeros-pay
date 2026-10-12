@@ -2,23 +2,95 @@ import Link from "next/link";
 import { getActingContext } from "@/lib/auth";
 import { getGovernmentFeatureFlags } from "@/lib/queries";
 import {
+  calculateHedgePositionPnl,
   getMarketChartData,
+  getUserHedgePositions,
   getUserMarketPortfolio,
 } from "@/lib/synthetic-market";
 import { CURRENCY_NAME, DEFAULT_MARKET_DISCLOSURE } from "@/lib/constants";
 import { formatDateTime } from "@/lib/datetime";
 import { SyntheticMarketTerminal } from "@/components/v4/synthetic-market-chart";
+import {
+  HedgeTradingPanel,
+  type SerializedHedgePosition,
+  type SerializedLeverageRequest,
+} from "@/components/v5/hedge-trading-panel";
+import { db } from "@/db/client";
+import { government } from "@/db/schema";
 
 export default async function AerosMarketPage() {
   const ctx = await getActingContext();
   if (!ctx) return null;
 
   const { user } = ctx;
-  const [flags, chart15m, portfolio] = await Promise.all([
+  const [flags, chart15m, portfolio, hedgeData, govRows] = await Promise.all([
     getGovernmentFeatureFlags(),
     getMarketChartData("15m", 96),
     getUserMarketPortfolio(user.id),
+    getUserHedgePositions(user.id).catch(() => ({
+      openPositions: [],
+      closedPositions: [],
+      leverageRequests: [],
+    })),
+    db.select({ interval: government.marketUpdateIntervalMinutes }).from(government).limit(1),
   ]);
+
+  const marketUpdateIntervalMinutes = govRows[0]?.interval === 5 ? 5 : 1;
+  const currentPrice = chart15m.state.currentPrice;
+
+  const serializePos = (
+    p: (typeof hedgeData.openPositions)[number],
+  ): SerializedHedgePosition => {
+    const pnl = calculateHedgePositionPnl({
+      direction: p.direction,
+      entryPrice: p.entryPrice,
+      currentPrice: p.closePrice ?? currentPrice,
+      quantity: p.quantity,
+      marginLocked: p.marginLocked,
+    });
+    const liqPrice =
+      p.direction === "LONG"
+        ? Math.max(1, p.entryPrice - Math.floor(p.marginLocked / p.quantity))
+        : p.entryPrice + Math.floor(p.marginLocked / p.quantity);
+
+    return {
+      id: p.id,
+      positionNumber: p.positionNumber,
+      direction: p.direction,
+      sideLabel: p.direction === "LONG" ? "BUY" : "SELL",
+      quantity: p.quantity,
+      leverage: p.leverage,
+      entryPrice: p.entryPrice,
+      notionalValueAeros: p.costBasis,
+      marginLocked: p.marginLocked,
+      liquidationPrice: liqPrice,
+      status: p.status,
+      closePrice: p.closePrice,
+      realizedPnl: p.realizedPnl,
+      unrealizedPnl: pnl.unrealizedPnl,
+      effectiveEquity: pnl.estimatedPayout,
+      wouldLiquidate: pnl.estimatedPayout <= 0,
+      openTxRef: p.openTxRef,
+      closeTxRef: p.closeTxRef,
+      openedAt: p.openedAt.toISOString(),
+      closedAt: p.closedAt ? p.closedAt.toISOString() : null,
+    };
+  };
+
+  const serializedOpenPositions = hedgeData.openPositions.map(serializePos);
+  const serializedClosedPositions = hedgeData.closedPositions.map(serializePos);
+
+  const serializedLeverageRequests: SerializedLeverageRequest[] =
+    hedgeData.leverageRequests.map((r) => ({
+      id: r.id,
+      requestNumber: `LEV-${r.id.slice(0, 6).toUpperCase()}`,
+      currentLeverage: r.currentLeverage,
+      requestedLeverage: r.requestedLeverage,
+      reason: `Requesting upgrade from ${r.currentLeverage}x to ${r.requestedLeverage}x`,
+      status: r.status,
+      reviewNote: r.rejectionReason || r.adminNotes || null,
+      createdAt: r.createdAt.toISOString(),
+    }));
 
   const serializedCandles = chart15m.candles.map((c) => ({
     bucketStart: c.bucketStart.toISOString(),
@@ -34,22 +106,23 @@ export default async function AerosMarketPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Aeros Market &amp; Synthetic Index
+          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
+            Aeros Market Index &amp; Hedge Trading Terminal
           </h1>
-          <p className="mt-1 text-sm text-muted">
-            Internal deterministic whole-number synthetic index (AMI) with Long &amp; Short
-            Treasury-settled trading.
+          <p className="mt-1 text-xs text-muted sm:text-sm">
+            Deterministic whole-number synthetic index (AMI) with independent{" "}
+            <strong>BUY (Long)</strong> &amp; <strong>SELL (Short)</strong> positions, structured
+            leverage (2x → 4x → 8x → 10x), and {marketUpdateIntervalMinutes}-minute market updates.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Link href="/exchange" className="btn btn-secondary text-xs">
             Aeros Exchange
           </Link>
           <Link href="/market" className="btn btn-secondary text-xs">
-            Goods &amp; Services Market
+            Marketplace &amp; Jobs
           </Link>
         </div>
       </div>
@@ -59,83 +132,98 @@ export default async function AerosMarketPage() {
           <h2 className="font-medium">Aeros Market is currently offline</h2>
           <p className="mt-1 text-sm text-muted">
             The Government has temporarily disabled the synthetic market view. Your existing
-            index holdings ({portfolio.position.unitsHeld.toLocaleString()} long units,{" "}
-            {portfolio.position.shortUnitsHeld.toLocaleString()} short units) and wallet
-            balances remain intact.
+            positions ({serializedOpenPositions.length} hedge positions,{" "}
+            {portfolio.position.unitsHeld.toLocaleString()} spot long units) and wallet balances
+            remain intact.
           </p>
         </section>
       ) : (
-        <SyntheticMarketTerminal
-          initialTimeframe="15m"
-          methodologyVersion={chart15m.state.methodologyVersion}
-          currentPrice={chart15m.state.currentPrice}
-          previousPrice={chart15m.state.previousPrice}
-          minPrice={chart15m.state.minPrice}
-          maxPrice={chart15m.state.maxPrice}
-          maxOrderUnits={chart15m.state.maxOrderUnits}
-          shortSellingEnabled={chart15m.state.shortSellingEnabled}
-          shortCollateralRatioBp={chart15m.state.shortCollateralRatioBp}
-          maxShortUnitsPerUser={chart15m.state.maxShortUnitsPerUser}
-          tradingEnabled={flags.tradingEnabled}
-          userBalance={user.balance}
-          portfolio={{
-            unitsHeld: portfolio.position.unitsHeld,
-            totalCostBasis: portfolio.position.totalCostBasis,
-            realizedPnl: portfolio.position.realizedPnl,
-            averageEntryPrice: portfolio.averageEntryPrice,
-            marketValueAeros: portfolio.marketValueAeros,
-            unrealizedPnlAeros: portfolio.unrealizedPnlAeros,
-            shortUnitsHeld: portfolio.position.shortUnitsHeld,
-            shortEntryNotional: portfolio.position.shortEntryNotional,
-            shortCollateralLocked: portfolio.position.shortCollateralLocked,
-            shortAverageEntryPrice: portfolio.shortAverageEntryPrice,
-            shortLiabilityAeros: portfolio.shortLiabilityAeros,
-            shortUnrealizedPnlAeros: portfolio.shortUnrealizedPnlAeros,
-            shortNetEquityAeros: portfolio.shortNetEquityAeros,
-            totalUnrealizedPnlAeros: portfolio.totalUnrealizedPnlAeros,
-          }}
-          stats24h={chart15m.stats24h}
-          initialCandles={serializedCandles}
-          initialHasOlderHistory={chart15m.hasOlderHistory}
-        />
+        <>
+          {/* V5 Independent Hedge Trading & Leverage Progression Panel */}
+          <HedgeTradingPanel
+            currentPrice={currentPrice}
+            marketUpdateIntervalMinutes={marketUpdateIntervalMinutes}
+            tradingEnabled={flags.tradingEnabled}
+            userBalance={user.balance}
+            maxOrderUnits={chart15m.state.maxOrderUnits}
+            userMaxLeverage={user.maxLeverage ?? 2}
+            openPositions={serializedOpenPositions}
+            closedPositions={serializedClosedPositions}
+            leverageRequests={serializedLeverageRequests}
+          />
+
+          {/* Interactive Candlestick Chart & Spot/Collateralized Terminal */}
+          <SyntheticMarketTerminal
+            initialTimeframe="15m"
+            methodologyVersion={chart15m.state.methodologyVersion}
+            currentPrice={chart15m.state.currentPrice}
+            previousPrice={chart15m.state.previousPrice}
+            minPrice={chart15m.state.minPrice}
+            maxPrice={chart15m.state.maxPrice}
+            maxOrderUnits={chart15m.state.maxOrderUnits}
+            shortSellingEnabled={chart15m.state.shortSellingEnabled}
+            shortCollateralRatioBp={chart15m.state.shortCollateralRatioBp}
+            maxShortUnitsPerUser={chart15m.state.maxShortUnitsPerUser}
+            tradingEnabled={flags.tradingEnabled}
+            userBalance={user.balance}
+            portfolio={{
+              unitsHeld: portfolio.position.unitsHeld,
+              totalCostBasis: portfolio.position.totalCostBasis,
+              realizedPnl: portfolio.position.realizedPnl,
+              averageEntryPrice: portfolio.averageEntryPrice,
+              marketValueAeros: portfolio.marketValueAeros,
+              unrealizedPnlAeros: portfolio.unrealizedPnlAeros,
+              shortUnitsHeld: portfolio.position.shortUnitsHeld,
+              shortEntryNotional: portfolio.position.shortEntryNotional,
+              shortCollateralLocked: portfolio.position.shortCollateralLocked,
+              shortAverageEntryPrice: portfolio.shortAverageEntryPrice,
+              shortLiabilityAeros: portfolio.shortLiabilityAeros,
+              shortUnrealizedPnlAeros: portfolio.shortUnrealizedPnlAeros,
+              shortNetEquityAeros: portfolio.shortNetEquityAeros,
+              totalUnrealizedPnlAeros: portfolio.totalUnrealizedPnlAeros,
+            }}
+            stats24h={chart15m.stats24h}
+            initialCandles={serializedCandles}
+            initialHasOlderHistory={chart15m.hasOlderHistory}
+          />
+        </>
       )}
 
-      <section className="card p-5">
+      <section className="card p-4 sm:p-5">
         <h2 className="font-medium">How the Synthetic Market Works</h2>
         <p className="mt-1 text-xs leading-relaxed text-muted">
           {DEFAULT_MARKET_DISCLOSURE}
         </p>
         <div className="mt-3 grid gap-3 text-xs sm:grid-cols-3">
           <div className="rounded-md bg-surface p-3">
-            <p className="font-semibold">Whole-Number Pricing &amp; Zoom</p>
+            <p className="font-semibold">Whole-Number Pricing &amp; 5m Candle Fix</p>
             <p className="mt-1 text-muted">
               Every candle (Open, High, Low, Close) and execution price is an exact whole number of{" "}
               {CURRENCY_NAME} bounded between {chart15m.state.minPrice.toLocaleString()} and{" "}
-              {chart15m.state.maxPrice.toLocaleString()} {CURRENCY_NAME}. Zoom in/out or pan
-              horizontally to inspect historical candles.
+              {chart15m.state.maxPrice.toLocaleString()} {CURRENCY_NAME}. 5m, 15m, and 1h candles
+              aggregate deterministically from the {marketUpdateIntervalMinutes}-minute market clock.
             </p>
           </div>
           <div className="rounded-md bg-surface p-3">
-            <p className="font-semibold">Long (BUY / SELL) &amp; Short (SHORT / COVER)</p>
+            <p className="font-semibold">Independent BUY (Long) &amp; SELL (Short)</p>
             <p className="mt-1 text-muted">
-              <strong>BUY</strong> acquires long AMI units. <strong>SELL</strong> closes long units
-              (or opens a short position if you hold 0 long units). <strong>SHORT</strong> opens a
-              100% collateralized short position without owning units; <strong>COVER</strong> closes
-              it and settles collateral +/- P&amp;L.
+              <strong>BUY (Long)</strong> opens an independent long position that profits when the
+              index rises. <strong>SELL (Short)</strong> opens an independent short position that
+              profits when the index falls. Opposing positions never auto-cancel each other.
             </p>
           </div>
           <div className="rounded-md bg-surface p-3">
-            <p className="font-semibold">Read-Only Chart Refresh</p>
+            <p className="font-semibold">Structured Leverage (2x → 4x → 8x → 10x)</p>
             <p className="mt-1 text-muted">
-              Refreshing this page, zooming, or switching between 5m, 15m, and 1h views is strictly
-              read-only and never moves the price or fabricates trading volume.
+              Citizens begin with 2x leverage and can request 4x, 8x, and up to the hard 10x cap
+              via Government review. All settlements preserve the total monetary supply invariant.
             </p>
           </div>
         </div>
       </section>
 
-      <section className="card p-5">
-        <h2 className="mb-3 font-medium">Your recent synthetic market orders</h2>
+      <section className="card p-4 sm:p-5">
+        <h2 className="mb-3 font-medium">Your recent spot &amp; synthetic market orders</h2>
         {portfolio.recentOrders.length === 0 ? (
           <p className="text-sm text-muted">
             You have not placed any synthetic market orders yet.

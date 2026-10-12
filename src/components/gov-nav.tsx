@@ -11,12 +11,14 @@ import { govLogoutAction } from "@/actions/auth";
  */
 const NAV_ITEMS = [
   { href: "/gov", label: "Dashboard" },
+  { href: "/gov/archive", label: "Archive Center (15 Repos)" },
+  { href: "/gov/market", label: "Market Index & Leverage" },
+  { href: "/gov/companies", label: "Companies & Partnerships" },
+  { href: "/gov/control-room", label: "Control Room & Media" },
+  { href: "/media", label: "Aeros Media" },
   { href: "/gov/exchange", label: "Exchange" },
-  { href: "/gov/market", label: "Market Index" },
   { href: "/gov/refunds", label: "Refunds" },
-  { href: "/gov/archive", label: "Archive Center" },
   { href: "/gov/users", label: "Users" },
-  { href: "/gov/companies", label: "Companies" },
   { href: "/gov/transactions", label: "Transactions" },
   { href: "/gov/treasury", label: "Treasury" },
   { href: "/gov/tax", label: "Taxes" },
@@ -31,7 +33,6 @@ const NAV_ITEMS = [
   { href: "/gov/updates", label: "Updates" },
   { href: "/gov/audit", label: "Audit Log" },
   { href: "/gov/codes", label: "Codes" },
-  { href: "/gov/control-room", label: "Control Room" },
   { href: "/gov/retention", label: "Retention" },
   { href: "/gov/health", label: "Health" },
   { href: "/gov/exports", label: "Exports" },
@@ -46,11 +47,14 @@ export function GovNavbar({ alerts = 0 }: { alerts?: number }) {
   const pathname = usePathname();
 
   return (
-    <header className="border-b border-border">
+    <header className="sticky top-0 z-30 border-b border-border bg-background/95 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
         <div className="flex items-center gap-2">
           <AerosLogo size={24} />
           <span className="font-semibold tracking-tight">Government Panel</span>
+          <span className="rounded bg-black px-1.5 py-0.5 text-[10px] font-bold text-white">
+            V5
+          </span>
           {alerts > 0 && (
             <span className="badge badge-suspended ml-1">{alerts} needs attention</span>
           )}
