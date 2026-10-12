@@ -48,7 +48,7 @@ export interface GithubArchiveEnvConfig {
 export function getGithubArchiveEnvConfig(): GithubArchiveEnvConfig {
   const token = (process.env.GITHUB_ARCHIVE_TOKEN ?? "").trim();
   const explicitOwner = (process.env.GITHUB_ARCHIVE_OWNER ?? "").trim();
-  const owner = explicitOwner || (token ? "ayushnani54-jpg" : "");
+  const owner = explicitOwner || "ayushnani54-jpg";
   const branch = (process.env.GITHUB_ARCHIVE_BRANCH ?? "main").trim() || "main";
   const rawEnabled = (process.env.GITHUB_ARCHIVE_ENABLED ?? "true").trim().toLowerCase();
   const enabledFlag = rawEnabled !== "false" && rawEnabled !== "0";
@@ -74,7 +74,7 @@ export function getGithubArchiveEnvConfig(): GithubArchiveEnvConfig {
   return {
     enabled: enabledFlag,
     hasLiveCredentials: Boolean(token && owner && enabledFlag),
-    owner: owner || "local-aeros-archive",
+    owner,
     branch,
     token,
     repos,

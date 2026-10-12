@@ -7,6 +7,7 @@ import { GITHUB_ARCHIVE_REPOS_V5, type GithubArchiveRepoKeyV5 } from "@/lib/cons
 
 export interface SerializedV5RepoStatus {
   repoKey: string;
+  repoOwner?: string;
   baseRepoName: string;
   activeRepoName: string;
   shardGeneration: number;
@@ -18,6 +19,9 @@ export interface SerializedV5RepoStatus {
   nextContinuationRepoName: string;
   totalBatchesPushed: number;
   totalRecordsArchived: number;
+  lastPushAt?: string | null;
+  lastVerifiedAt?: string | null;
+  lastError?: string | null;
 }
 
 export interface SerializedArchiveJobRun {
@@ -56,11 +60,13 @@ export function GovArchiveV5Panel({
   recentJobs,
   warningCount,
   criticalCount,
+  hasLiveCredentials = false,
 }: {
   repositories: SerializedV5RepoStatus[];
   recentJobs: SerializedArchiveJobRun[];
   warningCount: number;
   criticalCount: number;
+  hasLiveCredentials?: boolean;
 }) {
   const latestJob = recentJobs[0] ?? null;
 
@@ -72,7 +78,7 @@ export function GovArchiveV5Panel({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded bg-black px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-white">
-                V5 Durable Archival Engine
+                Durable Archival Engine
               </span>
               <span className="rounded bg-surface px-2 py-0.5 text-[11px] font-semibold text-muted">
                 15 Dedicated Private GitHub Repositories
@@ -133,12 +139,18 @@ export function GovArchiveV5Panel({
 
           <div className="mt-2.5 grid grid-cols-2 gap-1.5 sm:grid-cols-4 lg:grid-cols-8">
             {JOB_STAGES.map((stage, idx) => {
-              const currentIdx = latestJob
-                ? JOB_STAGES.indexOf(latestJob.status as (typeof JOB_STAGES)[number])
-                : -1;
+              const phaseKey = (latestJob?.currentPhase ||
+                latestJob?.status ||
+                "") as (typeof JOB_STAGES)[number];
+              const currentIdx = latestJob ? JOB_STAGES.indexOf(phaseKey) : -1;
               const isCompleted =
-                latestJob?.status === "COMPLETED" || (currentIdx >= 0 && idx < currentIdx);
-              const isCurrent = latestJob?.status === stage && stage !== "COMPLETED";
+                latestJob?.status === "COMPLETED" ||
+                latestJob?.currentPhase === "COMPLETED" ||
+                (currentIdx >= 0 && idx < currentIdx);
+              const isCurrent =
+                latestJob !== null &&
+                !isCompleted &&
+                (latestJob.currentPhase === stage || latestJob.status === stage);
 
               return (
                 <div
@@ -201,6 +213,9 @@ export function GovArchiveV5Panel({
           {repositories.map((repo) => {
             const meta =
               GITHUB_ARCHIVE_REPOS_V5[repo.repoKey as GithubArchiveRepoKeyV5] ?? null;
+            const owner = repo.repoOwner || "ayushnani54-jpg";
+            const githubUrl = `https://github.com/${owner}/${repo.activeRepoName}`;
+            const headroomBytes = Math.max(0, repo.hardLimitBytes - repo.estimatedBytesUsed);
 
             return (
               <div
@@ -210,9 +225,14 @@ export function GovArchiveV5Panel({
                 <div>
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <span className="font-mono text-xs font-bold text-foreground">
-                        {repo.activeRepoName}
-                      </span>
+                      <a
+                        href={githubUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono text-xs font-bold text-foreground underline decoration-border hover:decoration-black"
+                      >
+                        {repo.activeRepoName} ↗
+                      </a>
                       {repo.shardGeneration > 1 && (
                         <span className="ml-1.5 rounded bg-amber-200 px-1.5 py-0.5 font-mono text-[10px] font-bold text-amber-950">
                           Gen #{repo.shardGeneration}
@@ -240,6 +260,11 @@ export function GovArchiveV5Panel({
                       {meta.description}
                     </p>
                   )}
+                  {meta && meta.datasets.length > 0 && (
+                    <p className="mt-1 font-mono text-[10px] text-muted">
+                      Dataset: {meta.datasets.join(", ")}
+                    </p>
+                  )}
                 </div>
 
                 <div className="mt-3 space-y-1.5 border-t border-border pt-2.5">
@@ -261,12 +286,22 @@ export function GovArchiveV5Panel({
                       style={{ width: `${Math.min(100, Math.max(2, repo.percentOfLimit))}%` }}
                     />
                   </div>
+                  <div className="flex justify-between text-[10px] text-muted">
+                    <span>Headroom: {formatMb(headroomBytes)} free</span>
+                    <span className="font-mono">Rollover: {repo.nextContinuationRepoName}</span>
+                  </div>
                   <div className="flex justify-between text-[11px] text-muted">
                     <span>
                       Batches: <strong>{repo.totalBatchesPushed}</strong> · Records:{" "}
                       <strong>{repo.totalRecordsArchived.toLocaleString("en-IN")}</strong>
                     </span>
-                    <span className="font-mono">Next: {repo.nextContinuationRepoName}</span>
+                    <span className="text-[10px]">
+                      {repo.lastVerifiedAt
+                        ? `Verified ${new Date(repo.lastVerifiedAt).toLocaleDateString()}`
+                        : hasLiveCredentials
+                          ? "Remote GitHub Ready"
+                          : "Local Verified Store"}
+                    </span>
                   </div>
                 </div>
               </div>

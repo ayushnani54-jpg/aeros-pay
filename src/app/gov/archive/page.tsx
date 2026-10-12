@@ -25,16 +25,75 @@ import {
   type SerializedV5RepoStatus,
 } from "@/components/v5/gov-archive-v5-panel";
 
+export const dynamic = "force-dynamic";
+
 export default async function GovArchiveCenterPage() {
   const gov = await getCurrentGovernment();
   if (!gov) return null;
 
   const [snapshot, v41Overview, batches, checkpoints, v5Storage, recentJobRuns] =
     await Promise.all([
-      getAccountingPreservationSnapshot(),
-      getArchiveCenterV41Overview(),
-      getArchiveBatchesList(50),
-      getAccountingCheckpointsList(40),
+      getAccountingPreservationSnapshot().catch(() => ({
+        capturedAt: new Date().toISOString(),
+        totalSupply: gov.totalSupply ?? 0,
+        treasuryBalance: gov.balance ?? 0,
+        userHeldBalance: 0,
+        companyHeldBalance: 0,
+        retiredSupply: gov.retiredSupply ?? 0,
+        accounted: gov.totalSupply ?? 0,
+        supplyBalanced: true,
+        archivedTaxCollected: gov.archivedTaxCollected ?? 0,
+        archivedTreasuryCredits: gov.archivedCredits ?? 0,
+        archivedTreasuryDebits: gov.archivedDebits ?? 0,
+        archivedUserCredits: 0,
+        archivedUserDebits: 0,
+        archivedCompanyCredits: 0,
+        archivedCompanyDebits: 0,
+        archivedCompanySalesNet: 0,
+        checkpointCount: 0,
+        totalClearedTx: 0,
+        totalGrossCleared: 0,
+        totalTaxCleared: 0,
+        totalNetCleared: 0,
+      })),
+      getArchiveCenterV41Overview().catch(() => ({
+        githubEnv: {
+          enabled: true,
+          hasLiveCredentials: Boolean(process.env.GITHUB_ARCHIVE_TOKEN),
+          owner: process.env.GITHUB_ARCHIVE_OWNER || "ayushnani54-jpg",
+          branch: "main",
+          modeLabel: process.env.GITHUB_ARCHIVE_TOKEN
+            ? `LIVE GITHUB PRIVATE REPOS (${process.env.GITHUB_ARCHIVE_OWNER || "ayushnani54-jpg"})`
+            : "LOCAL VERIFIED ARCHIVE STORE (Configure GITHUB_ARCHIVE_TOKEN for remote GitHub push)",
+        },
+        repositories: [],
+        awaitingArchivalCounts: {
+          transactions_history: 0,
+          settled_market_orders: 0,
+          closed_refunds: 0,
+          old_market_candles: 0,
+          closed_exchange_purchases: 0,
+          settled_contracts: 0,
+          repaid_loans: 0,
+          settled_invoices: 0,
+          completed_marketplace_orders: 0,
+          closed_company_sales: 0,
+          audit_logs_history: 0,
+        },
+        failedOrHaltedBatches: [],
+        neonOperationalCounts: {
+          registeredUsers: 0,
+          approvedCompanies: 0,
+          activeLoans: 0,
+          pendingInvoices: 0,
+          openContracts: 0,
+          activeMarketplaceListings: 0,
+          openMarketplaceOrders: 0,
+          openMarketPositions: 0,
+        },
+      })),
+      getArchiveBatchesList(50).catch(() => []),
+      getAccountingCheckpointsList(40).catch(() => []),
       getV5RepositoriesStorageStatus().catch(() => ({
         repositories: [],
         warningCount: 0,
@@ -46,6 +105,7 @@ export default async function GovArchiveCenterPage() {
 
   const serializedV5Repos: SerializedV5RepoStatus[] = v5Storage.repositories.map((r) => ({
     repoKey: r.repoKey,
+    repoOwner: v41Overview.githubEnv.owner || "ayushnani54-jpg",
     baseRepoName: r.baseRepoName,
     activeRepoName: r.activeRepoName,
     shardGeneration: r.shardGeneration,
@@ -57,6 +117,9 @@ export default async function GovArchiveCenterPage() {
     nextContinuationRepoName: r.nextContinuationRepoName,
     totalBatchesPushed: r.totalBatchesPushed,
     totalRecordsArchived: r.totalRecordsArchived,
+    lastPushAt: r.lastPushAt ? r.lastPushAt.toISOString() : null,
+    lastVerifiedAt: r.lastVerifiedAt ? r.lastVerifiedAt.toISOString() : null,
+    lastError: r.lastError ?? null,
   }));
 
   const serializedJobs: SerializedArchiveJobRun[] = recentJobRuns.map((j) => ({
@@ -89,7 +152,7 @@ export default async function GovArchiveCenterPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
-            Archive Center V5 — 15-Repository GitHub Store &amp; 900 MB Threshold Monitor
+            Archive Center — 15-Repository GitHub Store &amp; 900 MB Threshold Monitor
           </h1>
           <p className="mt-1 text-xs text-muted sm:text-sm">
             Dual-Layer Architecture: <strong>Neon PostgreSQL</strong> (essential operational state) +{" "}
@@ -122,12 +185,13 @@ export default async function GovArchiveCenterPage() {
         </div>
       </div>
 
-      {/* V5 Manual "Start GitHub Archive" Control & 15-Repo 900 MB Threshold Monitor */}
+      {/* Manual "Start GitHub Archive" Control & 15-Repo 900 MB Threshold Monitor */}
       <GovArchiveV5Panel
         repositories={serializedV5Repos}
         recentJobs={serializedJobs}
         warningCount={v5Storage.warningCount}
         criticalCount={v5Storage.criticalCount}
+        hasLiveCredentials={v41Overview.githubEnv.hasLiveCredentials}
       />
 
       {/* 1. 5 Private GitHub Archive Repositories Status */}
@@ -135,7 +199,7 @@ export default async function GovArchiveCenterPage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="font-medium">
-              5 Private GitHub Historical Archive Repositories (400 MB Warning / 750 MB Auto-Shard)
+              5 Legacy Consolidated GitHub Archive Repositories (400 MB Warning / 750 MB Auto-Shard)
             </h2>
             <p className="mt-0.5 text-xs text-muted">
               Each repository stores partitioned <span className="font-mono">.jsonl</span> batches,{" "}
@@ -153,6 +217,7 @@ export default async function GovArchiveCenterPage() {
             const warnPct = Math.round(
               (repo.warningThresholdBytes / Math.max(1, repo.hardLimitBytes)) * 100,
             );
+            const repoUrl = `https://github.com/${v41Overview.githubEnv.owner || "ayushnani54-jpg"}/${repo.repoName}`;
             return (
               <div
                 key={repo.repoKey}
@@ -160,9 +225,14 @@ export default async function GovArchiveCenterPage() {
               >
                 <div>
                   <div className="flex items-center justify-between gap-1">
-                    <span className="font-mono font-semibold text-foreground">
-                      {repo.repoName}
-                    </span>
+                    <a
+                      href={repoUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono font-semibold text-foreground underline decoration-border hover:decoration-black"
+                    >
+                      {repo.repoName} ↗
+                    </a>
                     <span
                       className={`badge text-[10px] ${
                         repo.healthStatus === "HEALTHY"
@@ -176,7 +246,9 @@ export default async function GovArchiveCenterPage() {
                       {repo.healthStatus}
                     </span>
                   </div>
-                  <p className="mt-1 text-[11px] text-muted">{repo.meta.description}</p>
+                  <p className="mt-1 text-[11px] text-muted">
+                    {repo.meta?.description ?? "Aeros Pay Private GitHub Historical Archive Repository."}
+                  </p>
                 </div>
 
                 <div className="mt-3 space-y-1.5 border-t border-border pt-2">

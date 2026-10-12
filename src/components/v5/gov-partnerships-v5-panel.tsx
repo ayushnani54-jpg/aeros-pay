@@ -34,7 +34,7 @@ export function GovPartnershipsV5Panel({
         <div>
           <div className="flex items-center gap-2">
             <span className="rounded bg-blue-900 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-white">
-              V5 Corporate Alliances
+              Corporate Alliances
             </span>
             <h2 className="text-base font-semibold">
               Company-to-Company Partnerships &amp; 50/50 Revenue Sharing

@@ -52,9 +52,6 @@ export function GovNavbar({ alerts = 0 }: { alerts?: number }) {
         <div className="flex items-center gap-2">
           <AerosLogo size={24} />
           <span className="font-semibold tracking-tight">Government Panel</span>
-          <span className="rounded bg-black px-1.5 py-0.5 text-[10px] font-bold text-white">
-            V5
-          </span>
           {alerts > 0 && (
             <span className="badge badge-suspended ml-1">{alerts} needs attention</span>
           )}

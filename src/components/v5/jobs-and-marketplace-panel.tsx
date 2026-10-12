@@ -88,7 +88,7 @@ export function JobsAndMarketplaceTabs({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded bg-blue-400/20 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-blue-200">
-                V5 Commerce &amp; Employment Hub
+                Commerce &amp; Employment Hub
               </span>
               <span className="rounded bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white/90">
                 {openJobs.length} Open Citizen Jobs
@@ -177,7 +177,7 @@ export function JobsAndMarketplaceTabs({
         <div className="space-y-5">
           <div className="card border-blue-200 bg-blue-50/50 p-4 text-xs">
             <p className="font-semibold text-blue-950">
-              Citizen Employment Rules (Aeros Pay V5)
+              Citizen Employment Rules
             </p>
             <p className="mt-0.5 text-blue-900">
               Both the <strong>Government</strong> and <strong>Registered Companies</strong> can

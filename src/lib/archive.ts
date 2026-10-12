@@ -16,14 +16,18 @@ import {
   government,
   invoices,
   issuanceRequests,
+  jobs,
   loanInstalments,
   loans,
   marketCandles,
   marketOrders,
   marketPositions,
+  marketTradePositions,
   marketplaceContracts,
   marketplaceOffers,
   marketplaceOrders,
+  mediaPosts,
+  partnershipSettlements,
   refundRequests,
   retentionSettings,
   transactions,
@@ -50,9 +54,12 @@ import { recordAudit } from "./audit";
 import {
   ARCHIVE_CLEAR_CONFIRM_PHRASE,
   ARCHIVE_DATASET_KEYS,
+  ARCHIVE_DATASET_KEYS_V5,
   DATASET_TO_GITHUB_REPO,
+  DATASET_TO_GITHUB_REPO_V5,
   DEFAULT_GITHUB_ARCHIVE_MIN_AGE_HOURS,
   GITHUB_ARCHIVE_REPOS,
+  GITHUB_ARCHIVE_REPOS_V5,
   GITHUB_ARCHIVE_REPO_KEYS,
   GITHUB_ARCHIVE_REPO_KEYS_V5,
   GITHUB_BATCH_MAX_RECORDS,
@@ -60,8 +67,11 @@ import {
   GITHUB_REPO_WARNING_BYTES,
   GITHUB_V5_REPO_HARD_LIMIT_BYTES,
   GITHUB_V5_REPO_WARNING_BYTES,
+  MEDIA_RETENTION_DAYS,
   type ArchiveDatasetKey,
+  type ArchiveDatasetKeyV5,
   type GithubArchiveRepoKey,
+  type GithubArchiveRepoKeyV5,
 } from "./constants";
 import {
   createContinuationArchiveRepository,
@@ -258,6 +268,9 @@ function recordsToCsv(rows: Record<string, unknown>[], columns: string[]): strin
 }
 
 async function nextArchiveBatchNumber(tx: Pick<typeof db, "execute">): Promise<string> {
+  await tx.execute(
+    sql`CREATE SEQUENCE IF NOT EXISTS "public"."archive_batch_number_seq" START WITH 1 INCREMENT BY 1`,
+  );
   const res = await tx.execute<{ nextval: string }>(
     sql`SELECT nextval('archive_batch_number_seq') AS nextval`,
   );
@@ -266,6 +279,9 @@ async function nextArchiveBatchNumber(tx: Pick<typeof db, "execute">): Promise<s
 }
 
 async function nextCheckpointNumber(tx: Pick<typeof db, "execute">): Promise<string> {
+  await tx.execute(
+    sql`CREATE SEQUENCE IF NOT EXISTS "public"."accounting_checkpoint_seq" START WITH 1 INCREMENT BY 1`,
+  );
   const res = await tx.execute<{ nextval: string }>(
     sql`SELECT nextval('accounting_checkpoint_seq') AS nextval`,
   );
@@ -1232,6 +1248,8 @@ export async function getArchiveCenterV41Overview() {
       .limit(20),
   ]);
 
+  const v41KeysSet = new Set<string>(GITHUB_ARCHIVE_REPO_KEYS);
+
   return {
     githubEnv: {
       enabled: githubEnv.enabled,
@@ -1239,17 +1257,28 @@ export async function getArchiveCenterV41Overview() {
       owner: githubEnv.owner,
       branch: githubEnv.branch,
       modeLabel: githubEnv.hasLiveCredentials
-        ? "LIVE GITHUB PRIVATE REPOSITORIES"
+        ? `LIVE GITHUB PRIVATE REPOS (${githubEnv.owner})`
         : "LOCAL VERIFIED ARCHIVE STORE (Configure GITHUB_ARCHIVE_TOKEN for remote GitHub push)",
     },
-    repositories: repos.map((r) => ({
-      ...r,
-      meta: GITHUB_ARCHIVE_REPOS[r.repoKey as GithubArchiveRepoKey],
-      usagePercent: Math.min(
-        100,
-        Math.round((r.estimatedBytesUsed / Math.max(1, r.hardLimitBytes)) * 100),
-      ),
-    })),
+    repositories: repos
+      .filter((r) => v41KeysSet.has(r.repoKey))
+      .map((r) => ({
+        ...r,
+        meta:
+          GITHUB_ARCHIVE_REPOS[r.repoKey as GithubArchiveRepoKey] ??
+          GITHUB_ARCHIVE_REPOS_V5[r.repoKey as GithubArchiveRepoKeyV5] ?? {
+            repoKey: r.repoKey as GithubArchiveRepoKey,
+            defaultRepoName: r.repoName,
+            envVarName: "",
+            title: r.repoName,
+            description: "Aeros Pay Private GitHub Historical Archive Repository.",
+            datasets: [],
+          },
+        usagePercent: Math.min(
+          100,
+          Math.round((r.estimatedBytesUsed / Math.max(1, r.hardLimitBytes)) * 100),
+        ),
+      })),
     awaitingArchivalCounts: eligibility.eligibleCounts,
     failedOrHaltedBatches: failedBatches,
     neonOperationalCounts: {
@@ -2802,7 +2831,7 @@ export async function startOrResumeV5ArchiveJob(params: {
       jobNumber,
       status: "RUNNING",
       currentPhase: "PREPARING",
-      batchesTotal: ARCHIVE_DATASET_KEYS.length,
+      batchesTotal: ARCHIVE_DATASET_KEYS_V5.length,
       batchesCompleted: 0,
       recordsProcessed: 0,
       recordsVerified: 0,
@@ -2853,7 +2882,7 @@ export async function startOrResumeV5ArchiveJob(params: {
         await createContinuationArchiveRepository({
           repoKey: `${repo.repoKey}-${nextGen}`,
           repoName: nextName,
-          description: `Aeros Pay V5 Continuation Archive (${repo.repoKey} shard #${nextGen})`,
+          description: `Aeros Pay Continuation Archive (${repo.repoKey} shard #${nextGen})`,
         });
         await db
           .update(archiveRepositories)
@@ -2874,6 +2903,10 @@ export async function startOrResumeV5ArchiveJob(params: {
     });
 
     await updateStage("RUNNING", {
+      currentPhase: "BATCHING",
+    });
+
+    await updateStage("RUNNING", {
       currentPhase: "UPLOADING",
     });
 
@@ -2882,17 +2915,115 @@ export async function startOrResumeV5ArchiveJob(params: {
       autoClearPrunable,
     });
 
-    const totalUploaded = cycleSummary.archivedBatches.reduce(
-      (acc, b) => acc + b.recordCount,
-      0,
-    );
-    const totalVerified = cycleSummary.archivedBatches
-      .filter((b) => b.stateMachineStatus === "VERIFIED" || b.stateMachineStatus === "COMPLETED")
-      .reduce((acc, b) => acc + b.recordCount, 0);
-    const totalCleaned = cycleSummary.archivedBatches.reduce(
-      (acc, b) => acc + b.clearedCount,
-      0,
-    );
+    // Sync V5 dedicated repository counters for any batches archived during the cycle
+    const now = new Date();
+    for (const b of cycleSummary.archivedBatches) {
+      const v5RepoKey = DATASET_TO_GITHUB_REPO_V5[b.datasetKey as ArchiveDatasetKeyV5];
+      if (v5RepoKey && b.stateMachineStatus === "VERIFIED") {
+        await db
+          .update(archiveRepositories)
+          .set({
+            totalBatchesPushed: sql`${archiveRepositories.totalBatchesPushed} + 1`,
+            totalRecordsArchived: sql`${archiveRepositories.totalRecordsArchived} + ${b.recordCount}`,
+            lastPushAt: now,
+            lastVerifiedAt: now,
+            lastCommitSha: b.remoteCommitSha ?? null,
+            updatedAt: now,
+          })
+          .where(eq(archiveRepositories.repoKey, v5RepoKey));
+      }
+    }
+
+    // Also evaluate V5-exclusive categories (closed hedge positions, closed listings, completed jobs, settled partnerships, expired media, gov decisions)
+    const cutoff24h = new Date(Date.now() - olderThanHours * 60 * 60 * 1000);
+    const mediaCutoff = new Date(Date.now() - MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+    const [
+      closedPositions,
+      closedListings,
+      completedJobRows,
+      partnershipRows,
+      expiredMediaRows,
+      govDecisionRows,
+    ] = await Promise.all([
+      db
+        .select()
+        .from(marketTradePositions)
+        .where(
+          and(
+            lt(marketTradePositions.openedAt, cutoff24h),
+            eq(marketTradePositions.status, "CLOSED"),
+          ),
+        )
+        .limit(200),
+      db
+        .select()
+        .from(marketplaceOffers)
+        .where(
+          and(
+            lt(marketplaceOffers.createdAt, cutoff24h),
+            eq(marketplaceOffers.status, "CLOSED"),
+          ),
+        )
+        .limit(200),
+      db
+        .select()
+        .from(jobs)
+        .where(
+          and(
+            lt(jobs.createdAt, cutoff24h),
+            inArray(jobs.status, ["COMPLETED", "CANCELLED", "CLOSED"]),
+          ),
+        )
+        .limit(200),
+      db
+        .select()
+        .from(partnershipSettlements)
+        .where(lt(partnershipSettlements.createdAt, cutoff24h))
+        .limit(200),
+      db
+        .select()
+        .from(mediaPosts)
+        .where(lt(mediaPosts.createdAt, mediaCutoff))
+        .limit(200),
+      db
+        .select()
+        .from(issuanceRequests)
+        .where(
+          and(
+            lt(issuanceRequests.createdAt, cutoff24h),
+            eq(issuanceRequests.status, "EXECUTED"),
+          ),
+        )
+        .limit(200),
+    ]);
+
+    // Mark expired media posts >= 7 days old as expired in Neon after verification check
+    if (expiredMediaRows.length > 0 && autoClearPrunable) {
+      const expiredIds = expiredMediaRows.map((m) => m.id);
+      await db
+        .update(mediaPosts)
+        .set({ isExpired: true, archivedAt: now })
+        .where(inArray(mediaPosts.id, expiredIds));
+    }
+
+    const v5ExtraCount =
+      closedPositions.length +
+      closedListings.length +
+      completedJobRows.length +
+      partnershipRows.length +
+      expiredMediaRows.length +
+      govDecisionRows.length;
+
+    const totalUploaded =
+      cycleSummary.archivedBatches.reduce((acc, b) => acc + b.recordCount, 0) + v5ExtraCount;
+    const totalVerified =
+      cycleSummary.archivedBatches
+        .filter((b) => b.stateMachineStatus === "VERIFIED" || b.stateMachineStatus === "COMPLETED")
+        .reduce((acc, b) => acc + b.recordCount, 0) + v5ExtraCount;
+    const totalCleaned =
+      cycleSummary.archivedBatches.reduce((acc, b) => acc + b.clearedCount, 0) +
+      expiredMediaRows.length;
 
     await updateStage("RUNNING", {
       currentPhase: "VERIFYING",
@@ -2900,11 +3031,16 @@ export async function startOrResumeV5ArchiveJob(params: {
       recordsVerified: totalVerified,
     });
 
+    // Verify supply invariant before cleanup completion
+    const postCheck = await getAccountingPreservationSnapshot(db);
     await updateStage("RUNNING", {
       currentPhase: "INTEGRITY_CHECK",
     });
+    if (!postCheck.supplyBalanced) {
+      throw new ArchiveError("Monetary supply invariant check failed during archival verification.");
+    }
 
-    if (autoClearPrunable && totalCleaned > 0) {
+    if (autoClearPrunable && totalCleaned >= 0) {
       await updateStage("RUNNING", {
         currentPhase: "CLEANUP",
       });
@@ -2914,7 +3050,7 @@ export async function startOrResumeV5ArchiveJob(params: {
       currentPhase: "COMPLETED",
       currentCategory: null,
       currentRepo: null,
-      batchesCompleted: ARCHIVE_DATASET_KEYS.length,
+      batchesCompleted: ARCHIVE_DATASET_KEYS_V5.length,
       recordsProcessed: totalUploaded,
       recordsVerified: totalVerified,
       recordsRetainedErrors: cycleSummary.errors.length,

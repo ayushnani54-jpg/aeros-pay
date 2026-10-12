@@ -44,6 +44,18 @@ export interface SerializedMediaPost {
   expiresAt: string;
 }
 
+function formatMediaTimestamp(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function renderContentWithMentions(content: string) {
   const parts = content.split(/(@[a-zA-Z0-9_]{3,24})/g);
   return parts.map((part, idx) => {
@@ -230,7 +242,9 @@ export function AerosMediaFeedClient({
                   </div>
 
                   <div className="flex items-center gap-2 text-[11px] text-muted">
-                    <span className="font-mono">{post.postNumber}</span>
+                    <time dateTime={post.createdAt} title={post.postNumber}>
+                      {formatMediaTimestamp(post.createdAt)}
+                    </time>
                     <span>·</span>
                     <Link
                       href={`/pay?to=${post.authorUsername}`}
@@ -316,16 +330,21 @@ export function AerosMediaFeedClient({
                       <div className="space-y-2 divide-y divide-border/60">
                         {post.comments.map((c) => (
                           <div key={c.id} className="pt-2 first:pt-0">
-                            <div className="flex items-center gap-1.5">
-                              <Link
-                                href={`/u/${c.authorUsername}`}
-                                className="font-semibold hover:underline"
-                              >
-                                {c.authorDisplayName}
-                              </Link>
-                              <span className="font-mono text-[11px] text-muted">
-                                @{c.authorUsername}
-                              </span>
+                            <div className="flex flex-wrap items-center justify-between gap-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <Link
+                                  href={`/u/${c.authorUsername}`}
+                                  className="font-semibold hover:underline"
+                                >
+                                  {c.authorDisplayName}
+                                </Link>
+                                <span className="font-mono text-[11px] text-muted">
+                                  @{c.authorUsername}
+                                </span>
+                              </div>
+                              <time dateTime={c.createdAt} className="text-[11px] text-muted">
+                                {formatMediaTimestamp(c.createdAt)}
+                              </time>
                             </div>
                             <p className="mt-0.5 text-foreground">
                               {renderContentWithMentions(c.content)}

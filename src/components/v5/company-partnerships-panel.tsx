@@ -62,7 +62,7 @@ export function CompanyPartnershipsPanel({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <span className="rounded bg-amber-400/20 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-200">
-              V5 Corporate Alliances
+              Corporate Alliances
             </span>
             <h2 className="mt-1 text-lg font-semibold">
               Company-to-Company Partnerships &amp; 50/50 Revenue Settlement

@@ -30,6 +30,16 @@ and this project adheres to Semantic Versioning.
   - Added persistent yellow/amber processing banner below the navbar + bottom floating toast (`GlobalActionFeedbackProvider` and `V5ActionForm`).
   - Upgraded mobile-first responsive layouts, anti-zoom 16px form inputs, and section accent themes across the application.
 
+### Fixed
+- **Government Archive Center (`/gov/archive`) SSR & 15-Repository Pipeline**:
+  - Fixed `getArchiveCenterV41Overview()` filtering and fallback metadata when 15 V5 repositories exist alongside 5 legacy repositories in `archive_repositories`.
+  - Added `CREATE SEQUENCE IF NOT EXISTS` guards in `nextArchiveBatchNumber()` and `nextCheckpointNumber()`.
+  - Fixed `GovArchiveV5Panel` stage progression bar to highlight active phase (`currentPhase`) rather than only job status, and added clickable GitHub repository links (`https://github.com/ayushnani54-jpg/<repo>`), remaining headroom before 900 MB, and per-repo verification status.
+  - Extended `startOrResumeV5ArchiveJob()` to evaluate all 15 V5 dataset categories and sync V5 repository counters.
+- **Aeros Media Timestamps & Clean UI Presentation**:
+  - Rendered formatted creation timestamps (`createdAt`) on all Aeros Media posts and comments in `aeros-media-feed.tsx` instead of displaying raw internal `postNumber` IDs.
+  - Removed internal `"V5"` version badges from user-facing navigation bars and section headers.
+
 ## [4.1.0] - 2026-10-11
 
 ### Added

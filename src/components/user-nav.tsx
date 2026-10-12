@@ -83,9 +83,6 @@ export function UserNavbar({
         <Link href="/dashboard" className="flex shrink-0 items-center gap-2">
           <AerosLogo size={26} />
           <span className="font-semibold tracking-tight">{APP_NAME}</span>
-          <span className="rounded bg-black px-1.5 py-0.5 text-[10px] font-bold text-white">
-            V5
-          </span>
         </Link>
 
         <nav className="hidden items-center gap-1 overflow-x-auto lg:flex">

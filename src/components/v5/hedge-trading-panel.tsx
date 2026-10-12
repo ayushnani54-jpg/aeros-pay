@@ -106,7 +106,7 @@ export function HedgeTradingPanel({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded bg-emerald-400/20 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-emerald-200">
-                V5 Hedge-Style Execution
+                Hedge-Style Execution
               </span>
               <span className="rounded bg-white/10 px-2 py-0.5 text-[11px] font-medium text-white/90">
                 Market Clock: Every {marketUpdateIntervalMinutes}m
@@ -627,7 +627,7 @@ export function HedgeTradingPanel({
                 </V5ActionForm>
               ) : (
                 <div className="rounded-lg bg-[#eaf7ee] p-3 text-xs font-medium text-[#146c2e]">
-                  You have unlocked the maximum 10x leverage tier permitted in Aeros Pay V5.
+                  You have unlocked the maximum 10x leverage tier permitted in Aeros Pay.
                 </div>
               )}
 
@@ -707,7 +707,7 @@ export function HedgeTradingPanel({
                 <div className="rounded-lg border border-border p-3">
                   <p className="font-bold">3. Independent Hedge Positions</p>
                   <p className="mt-1 text-muted">
-                    Unlike basic spot accounts where buying cancels a short, V5 uses{" "}
+                    Unlike basic spot accounts where buying cancels a short, Aeros Pay uses{" "}
                     <strong>hedge-style position accounting</strong>. You can hold multiple BUY and
                     SELL positions simultaneously without one cancelling the other.
                   </p>

@@ -35,7 +35,7 @@ export function GovMarketV5Panel({
           <div>
             <div className="flex items-center gap-2">
               <span className="rounded bg-indigo-900 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-white">
-                V5 Market Engine
+                Market Engine
               </span>
               <h2 className="text-base font-semibold">
                 Market Price Update Interval &amp; 5m Candle Synchronization
@@ -70,7 +70,7 @@ export function GovMarketV5Panel({
             >
               {MARKET_UPDATE_INTERVALS.map((mins) => (
                 <option key={mins} value={mins}>
-                  Every {mins} minute{mins > 1 ? "s" : ""} {mins === 1 ? "(Default V5)" : "(Macro Cadence)"}
+                  Every {mins} minute{mins > 1 ? "s" : ""} {mins === 1 ? "(Default)" : "(Macro Cadence)"}
                 </option>
               ))}
             </select>
