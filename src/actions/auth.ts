@@ -1,6 +1,6 @@
 "use server";
 
-import { db } from "@/db/client";
+import { db, ensureV5SchemaMigrated } from "@/db/client";
 import { government, registrationCodes, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { hashSecret, verifySecret } from "@/lib/password";
@@ -75,6 +75,7 @@ export async function registerAction(
   const { username, password, displayName, registrationCode } = parsed.data;
 
   try {
+    await ensureV5SchemaMigrated();
     const newUserId = await db.transaction(async (tx) => {
       const [code] = await tx
         .select()
@@ -176,37 +177,38 @@ export async function loginAction(
   const rl = consumeRateLimit(rlKey, LOGIN_RULE);
   if (!rl.allowed) return { ok: false, error: rateLimitMessage(rl) };
 
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(eq(users.username, username))
-    .limit(1);
+  try {
+    await ensureV5SchemaMigrated();
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.username, username))
+      .limit(1);
 
-  if (!user) {
-    return { ok: false, error: "Invalid username or password." };
+    if (!user) {
+      return { ok: false, error: "Invalid username or password." };
+    }
+
+    const validPassword = await verifySecret(parsed.data.password, user.passwordHash);
+    if (!validPassword) {
+      return { ok: false, error: "Invalid username or password." };
+    }
+
+    // Correct credentials: clear the counter so earlier typos are forgiven.
+    resetRateLimit(rlKey);
+
+    await createUserSession({
+      id: user.id,
+      username: user.username,
+      sessionEpoch: user.sessionEpoch,
+    });
+  } catch (e) {
+    console.error("[loginAction] error:", e);
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Unable to sign in right now. Please try again.",
+    };
   }
-
-  const validPassword = await verifySecret(parsed.data.password, user.passwordHash);
-  if (!validPassword) {
-    return { ok: false, error: "Invalid username or password." };
-  }
-
-  // Correct credentials: clear the counter so earlier typos are forgiven.
-  resetRateLimit(rlKey);
-
-  // The epoch MUST come from the row we just read.
-  //
-  // `createUserSession` defaults it to 0, and `getCurrentUser` rejects any
-  // token whose epoch does not equal `users.session_epoch`. Omitting it here
-  // therefore minted a token stamped 0 for an account whose epoch had been
-  // bumped — which happens to every account after a Government password reset
-  // and after a user changes their own password — and that token was rejected
-  // on the very next request, locking the account out of the app permanently.
-  await createUserSession({
-    id: user.id,
-    username: user.username,
-    sessionEpoch: user.sessionEpoch,
-  });
   redirect("/dashboard");
 }
 
@@ -238,23 +240,32 @@ export async function govLoginAction(
   const rl = consumeRateLimit(rlKey, LOGIN_RULE);
   if (!rl.allowed) return { ok: false, error: rateLimitMessage(rl) };
 
-  const [gov] = await db
-    .select()
-    .from(government)
-    .where(eq(government.username, parsed.data.username))
-    .limit(1);
-
   // Generic error for any mismatch — never reveal which field was wrong.
   const genericError = { ok: false as const, error: "Invalid Government credentials." };
 
-  if (!gov) return genericError;
+  try {
+    await ensureV5SchemaMigrated();
+    const [gov] = await db
+      .select()
+      .from(government)
+      .where(eq(government.username, parsed.data.username))
+      .limit(1);
 
-  const validPassword = await verifySecret(parsed.data.password, gov.passwordHash);
-  const validCode = await verifySecret(parsed.data.securityCode, gov.securityCodeHash);
-  if (!validPassword || !validCode) return genericError;
+    if (!gov) return genericError;
 
-  resetRateLimit(rlKey);
-  await createGovSession({ id: gov.id, username: gov.username });
+    const validPassword = await verifySecret(parsed.data.password, gov.passwordHash);
+    const validCode = await verifySecret(parsed.data.securityCode, gov.securityCodeHash);
+    if (!validPassword || !validCode) return genericError;
+
+    resetRateLimit(rlKey);
+    await createGovSession({ id: gov.id, username: gov.username });
+  } catch (e) {
+    console.error("[govLoginAction] error:", e);
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Unable to sign in to Government portal right now.",
+    };
+  }
   redirect("/gov");
 }
 
@@ -262,3 +273,4 @@ export async function govLogoutAction() {
   await clearGovSession();
   redirect("/government/login");
 }
+

@@ -1,10 +1,10 @@
-# Aeros Pay (V4.1)
+# Aeros Pay (V5.0)
 
 Aeros Pay is a closed-loop sovereign virtual economy platform with **Citizens**, **Registered Companies**, and a central **Government Treasury**. Members hold and trade a virtual currency called **Aeros** (strictly whole-number integers).
 
 The application operates on a hybrid storage architecture:
-- **Neon Serverless PostgreSQL**: Ultra-lean operational database (~11.8 MB) holding active accounts, live balances, and hot `< 24h` events.
-- **5 Private GitHub Repositories**: Permanent, append-only historical storage for 11 datasets with remote SHA-256 read-back checksum verification before Neon record clearance.
+- **Neon Serverless PostgreSQL**: Ultra-lean operational database holding active accounts, live balances, open positions/jobs/partnerships, active `< 7d` Aeros Media posts, and hot `< 24h` events.
+- **15 Private GitHub Repositories**: Permanent, append-only historical storage across 15 dedicated categories (`900 MB` operating cap per repository with automatic `<repo>-2` continuation rollover) and remote SHA-256 read-back checksum verification before Neon record clearance.
 
 > **Project Identity Rule**: The product name is **Aeros Pay**. This name is permanent. The virtual currency is strictly **Aeros**.
 
@@ -17,13 +17,14 @@ Comprehensive documentation is maintained directly within this workspace:
 - **[Project Context](file:///d:/vscode%20projects/antigravity-Projects/Aeros%20Pay/docs/PROJECT_CONTEXT.md)**: Full project overview, roles, architecture, and agent instructions.
 - **[System Architecture](file:///d:/vscode%20projects/antigravity-Projects/Aeros%20Pay/docs/ARCHITECTURE.md)**: Component topology, App Router routing, and data flow.
 - **[Business Invariants](file:///d:/vscode%20projects/antigravity-Projects/Aeros%20Pay/docs/BUSINESS_INVARIANTS.md)**: Monetary supply invariant, whole-number math, atomicity, and double-settlement guards.
-- **[Database & Archival Architecture](file:///d:/vscode%20projects/antigravity-Projects/Aeros%20Pay/docs/DATABASE_AND_ARCHIVE.md)**: Complete 47-table schema, 5 GitHub repos, and 12-step 24h archival cycle.
+- **[Database & Archival Architecture](file:///d:/vscode%20projects/antigravity-Projects/Aeros%20Pay/docs/DATABASE_AND_ARCHIVE.md)**: Complete V5 schema, 15 GitHub repos, 900 MB rollover, and 12-step 24h archival cycle.
 - **[Security Model](file:///d:/vscode%20projects/antigravity-Projects/Aeros%20Pay/docs/SECURITY.md)**: HMAC-SHA256 sessions, epoch revocation, and secret sanitization.
 - **[Deployment & Verification](file:///d:/vscode%20projects/antigravity-Projects/Aeros%20Pay/docs/DEPLOYMENT_AND_VERIFICATION.md)**: Quality gates, Vercel cron configuration, and verification commands.
 - **[Future Development Process](file:///d:/vscode%20projects/antigravity-Projects/Aeros%20Pay/docs/DEVELOPMENT_WORKFLOW.md)**: Workflows for bug fixes, migrations, and features.
 - **[Changelog](file:///d:/vscode%20projects/antigravity-Projects/Aeros%20Pay/docs/CHANGELOG.md)**: Chronological version change log.
-- **[Version History & Archive](file:///d:/vscode%20projects/antigravity-Projects/Aeros%20Pay/docs/versions/VERSION_HISTORY.md)**: Version-by-version ledger from V1 to V4.1.
-- **[V4.1 Master Blueprint](file:///d:/vscode%20projects/antigravity-Projects/Aeros%20Pay/docs/architecture/AEROS_PAY_V4_1_MASTER_BLUEPRINT.md)**: Canonical master architecture blueprint.
+- **[Version History & Archive](file:///d:/vscode%20projects/antigravity-Projects/Aeros%20Pay/docs/versions/VERSION_HISTORY.md)**: Version-by-version ledger from V1 to V5.0.
+- **[V5.0 Master Blueprint](file:///d:/vscode%20projects/antigravity-Projects/Aeros%20Pay/docs/architecture/AEROS_PAY_V5_MASTER_BLUEPRINT.md)**: Canonical V5 master architecture blueprint (alongside [V4.1 Master Blueprint](file:///d:/vscode%20projects/antigravity-Projects/Aeros%20Pay/docs/architecture/AEROS_PAY_V4_1_MASTER_BLUEPRINT.md)).
+
 
 ---
 

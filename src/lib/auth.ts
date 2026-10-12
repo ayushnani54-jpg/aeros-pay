@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import { db } from "@/db/client";
+import { db, ensureV5SchemaMigrated } from "@/db/client";
 import { users, government, companies } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import {
@@ -12,27 +12,11 @@ import { effectiveCompanyStatus, effectiveUserStatus, type EffectiveStatus } fro
 import type { Company, Government, User } from "@/db/schema";
 import { userWallet, companyWallet, type WalletRef } from "./wallets";
 
-/**
- * Returns the authenticated user, or null.
- *
- * Also enforces the session epoch: a token minted before the Government reset
- * this user's password no longer matches `users.session_epoch` and is treated
- * as invalid, which is what makes a password reset actually end existing
- * sessions (spec §4).
- */
-/**
- * Wrapped in React's `cache()` so the layout and the page it renders share a
- * single database read per request instead of each issuing their own.
- *
- * Every page here is dynamic (it shows live balances), so before this the
- * layout and page were duplicating the same user and company queries on every
- * single navigation — which is a meaningful part of why navigation felt slow.
- * The cache is per-request, so it never serves one request's data to another.
- */
 export const getCurrentUser = cache(async function getCurrentUser(): Promise<User | null> {
   const session = await getUserSession();
   if (!session) return null;
 
+  await ensureV5SchemaMigrated();
   const [user] = await db
     .select()
     .from(users)
@@ -48,6 +32,8 @@ export const getCurrentUser = cache(async function getCurrentUser(): Promise<Use
 export const getCurrentGovernment = cache(async function getCurrentGovernment(): Promise<Government | null> {
   const session = await getGovSession();
   if (!session) return null;
+
+  await ensureV5SchemaMigrated();
   const [gov] = await db
     .select()
     .from(government)
