@@ -567,6 +567,7 @@ export async function uploadAndVerifyGithubArchiveBatch(params: {
   bytesWritten: number;
 }> {
   const cfg = getGithubArchiveEnvConfig();
+  const cfgV5 = getGithubArchiveEnvConfigV5();
   const transport = getActiveGithubTransport();
   const paths = buildPartitionedRepoPaths({
     batchNumber: params.batchNumber,
@@ -575,7 +576,12 @@ export async function uploadAndVerifyGithubArchiveBatch(params: {
     shardGeneration: params.shardGeneration,
   });
 
-  const repoName = cfg.repos[paths.repoKey];
+  const v5RepoKey =
+    DATASET_TO_GITHUB_REPO_V5[params.datasetKey as keyof typeof DATASET_TO_GITHUB_REPO_V5];
+  const repoName =
+    customTestTransport === null && cfg.hasLiveCredentials && v5RepoKey
+      ? cfgV5.repos[v5RepoKey]
+      : cfg.repos[paths.repoKey];
 
   // Step A: Upload immutable .jsonl batch file
   const batchUpload = await transport.putFile({
@@ -614,7 +620,7 @@ export async function uploadAndVerifyGithubArchiveBatch(params: {
         indexObj = JSON.parse(existingIndexFile.contentUtf8) as MonthlyPartitionIndex;
       } else {
         indexObj = {
-          schemaVersion: "V4.1",
+          schemaVersion: "V5.0",
           repoKey: paths.repoKey,
           datasetKey: params.datasetKey,
           yearMonth: paths.yearMonth,
@@ -728,14 +734,28 @@ export async function fetchArchivedBatchRecordsFromGithub<T = Record<string, unk
 }): Promise<T[] | null> {
   try {
     const cfg = getGithubArchiveEnvConfig();
+    const cfgV5 = getGithubArchiveEnvConfigV5();
     const transport = getActiveGithubTransport();
-    const repoName = cfg.repos[params.repoKey];
-    const file = await transport.getFile({
+    const primaryRepoName =
+      customTestTransport === null &&
+      cfg.hasLiveCredentials &&
+      params.repoKey === "aeros-archive-ledger"
+        ? cfgV5.repos["aeros-archive-payments"]
+        : cfg.repos[params.repoKey];
+    let file = await transport.getFile({
       owner: cfg.owner,
-      repo: repoName,
+      repo: primaryRepoName,
       branch: cfg.branch,
       path: params.batchPath,
     });
+    if ((!file.exists || !file.contentUtf8) && primaryRepoName !== cfg.repos[params.repoKey]) {
+      file = await transport.getFile({
+        owner: cfg.owner,
+        repo: cfg.repos[params.repoKey],
+        branch: cfg.branch,
+        path: params.batchPath,
+      });
+    }
     if (!file.exists || !file.contentUtf8) return null;
     return parseJsonl<T>(file.contentUtf8);
   } catch {
