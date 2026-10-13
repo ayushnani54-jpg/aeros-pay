@@ -844,8 +844,37 @@ export async function ensureV5RemoteRepositoriesProvisioned(): Promise<{
   }
 
   const created: string[] = [];
+  const existingNames = new Set<string>();
+
+  try {
+    const listRes = await fetch(
+      "https://api.github.com/user/repos?per_page=100&affiliation=owner",
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${cfg.token}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "AerosPay-V5-Archiver",
+        },
+        cache: "no-store",
+      },
+    );
+    if (listRes.ok) {
+      const reposJson = (await listRes.json()) as Array<{ name?: string }>;
+      for (const r of reposJson) {
+        if (r.name) existingNames.add(r.name);
+      }
+    }
+  } catch {
+    // Fall back to individual checks if listing fails
+  }
+
   for (const repoKey of GITHUB_ARCHIVE_REPO_KEYS_V5) {
     const repoName = cfg.repos[repoKey];
+    if (existingNames.has(repoName)) {
+      continue;
+    }
     const meta = GITHUB_ARCHIVE_REPOS_V5[repoKey];
     try {
       const checkUrl = `https://api.github.com/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(repoName)}`;
@@ -868,6 +897,10 @@ export async function ensureV5RemoteRepositoriesProvisioned(): Promise<{
         });
         if (res.ok) {
           created.push(repoName);
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+        } else if (res.error && res.error.includes("secondary rate limit")) {
+          // Stop attempting further repository creations in this window if GitHub's hourly limit is reached
+          break;
         }
       }
     } catch {
@@ -876,6 +909,127 @@ export async function ensureV5RemoteRepositoriesProvisioned(): Promise<{
   }
 
   return { checked: GITHUB_ARCHIVE_REPO_KEYS_V5.length, created };
+}
+
+export async function uploadAndVerifyV5CategoryBatch(params: {
+  datasetKey: string;
+  repoKey: GithubArchiveRepoKeyV5;
+  batchNumber: string;
+  referenceDate: Date;
+  rows: Record<string, unknown>[];
+}): Promise<{
+  verified: boolean;
+  repoName: string;
+  commitSha: string | null;
+  bytesWritten: number;
+  error?: string;
+}> {
+  if (params.rows.length === 0) {
+    const cfg = getGithubArchiveEnvConfigV5();
+    return {
+      verified: true,
+      repoName: cfg.repos[params.repoKey],
+      commitSha: null,
+      bytesWritten: 0,
+    };
+  }
+
+  const cfg = getGithubArchiveEnvConfigV5();
+  const transport = getActiveGithubTransport();
+  const repoName = cfg.repos[params.repoKey];
+  const yyyy = String(params.referenceDate.getUTCFullYear());
+  const mm = String(params.referenceDate.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(params.referenceDate.getUTCDate()).padStart(2, "0");
+  const safeBatch = params.batchNumber.toLowerCase();
+  const batchPath = `batches/${yyyy}/${mm}/${dd}/${safeBatch}-${params.datasetKey}.jsonl`;
+  const manifestPath = `manifests/${yyyy}/${mm}/${dd}/${safeBatch}-manifest.json`;
+
+  const jsonlContent = serializeJsonl(params.rows);
+  const expectedSha256 = createHash("sha256")
+    .update(Buffer.from(jsonlContent, "utf8"))
+    .digest("hex");
+
+  try {
+    const putBatch = await transport.putFile({
+      owner: cfg.owner,
+      repo: repoName,
+      branch: cfg.branch,
+      path: batchPath,
+      contentUtf8: jsonlContent,
+      commitMessage: `archive(${params.datasetKey}): batch ${params.batchNumber} (${params.rows.length} records)`,
+    });
+
+    const manifestContent =
+      JSON.stringify(
+        {
+          schemaVersion: "V5.0",
+          batchNumber: params.batchNumber,
+          datasetKey: params.datasetKey,
+          repoKey: params.repoKey,
+          recordCount: params.rows.length,
+          jsonlSha256: expectedSha256,
+          archivedAt: params.referenceDate.toISOString(),
+        },
+        null,
+        2,
+      ) + "\n";
+
+    await transport.putFile({
+      owner: cfg.owner,
+      repo: repoName,
+      branch: cfg.branch,
+      path: manifestPath,
+      contentUtf8: manifestContent,
+      commitMessage: `manifest(${params.datasetKey}): ${params.batchNumber} [sha256:${expectedSha256.slice(0, 12)}]`,
+    });
+
+    const readback = await transport.getFile({
+      owner: cfg.owner,
+      repo: repoName,
+      branch: cfg.branch,
+      path: batchPath,
+    });
+
+    if (!readback.exists || readback.contentUtf8 === null) {
+      return {
+        verified: false,
+        repoName,
+        commitSha: null,
+        bytesWritten: 0,
+        error: `Read-back missing for ${batchPath} in ${repoName}`,
+      };
+    }
+
+    const actualSha256 = createHash("sha256")
+      .update(Buffer.from(readback.contentUtf8, "utf8"))
+      .digest("hex");
+
+    if (actualSha256 !== expectedSha256) {
+      return {
+        verified: false,
+        repoName,
+        commitSha: null,
+        bytesWritten: 0,
+        error: `SHA-256 mismatch on ${batchPath}`,
+      };
+    }
+
+    return {
+      verified: true,
+      repoName,
+      commitSha: putBatch.commitSha,
+      bytesWritten:
+        Buffer.byteLength(jsonlContent, "utf8") + Buffer.byteLength(manifestContent, "utf8"),
+    };
+  } catch (err) {
+    return {
+      verified: false,
+      repoName,
+      commitSha: null,
+      bytesWritten: 0,
+      error: err instanceof Error ? err.message : "V5 category upload failed",
+    };
+  }
 }
 
 export {

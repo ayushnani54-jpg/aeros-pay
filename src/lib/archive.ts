@@ -87,6 +87,7 @@ import {
   sanitizeRecordForArchive,
   serializeJsonl,
   uploadAndVerifyGithubArchiveBatch,
+  uploadAndVerifyV5CategoryBatch,
 } from "./github-archive";
 
 /**
@@ -2998,32 +2999,100 @@ export async function startOrResumeV5ArchiveJob(params: {
         .limit(200),
     ]);
 
-    // Mark expired media posts >= 7 days old as expired in Neon after verification check
-    if (expiredMediaRows.length > 0 && autoClearPrunable) {
-      const expiredIds = expiredMediaRows.map((m) => m.id);
-      await db
-        .update(mediaPosts)
-        .set({ isExpired: true, archivedAt: now })
-        .where(inArray(mediaPosts.id, expiredIds));
+    const v5CategoryPayloads: Array<{
+      datasetKey: ArchiveDatasetKeyV5;
+      repoKey: GithubArchiveRepoKeyV5;
+      rows: Record<string, unknown>[];
+    }> = [
+      {
+        datasetKey: "settled_market_orders",
+        repoKey: "aeros-archive-trading-ledger",
+        rows: closedPositions as unknown as Record<string, unknown>[],
+      },
+      {
+        datasetKey: "closed_marketplace_listings",
+        repoKey: "aeros-archive-marketplace-listings",
+        rows: closedListings as unknown as Record<string, unknown>[],
+      },
+      {
+        datasetKey: "completed_jobs",
+        repoKey: "aeros-archive-jobs",
+        rows: completedJobRows as unknown as Record<string, unknown>[],
+      },
+      {
+        datasetKey: "settled_partnerships",
+        repoKey: "aeros-archive-company-partnerships",
+        rows: partnershipRows as unknown as Record<string, unknown>[],
+      },
+      {
+        datasetKey: "archived_media_posts",
+        repoKey: "aeros-archive-media",
+        rows: expiredMediaRows as unknown as Record<string, unknown>[],
+      },
+      {
+        datasetKey: "government_decisions",
+        repoKey: "aeros-archive-government",
+        rows: govDecisionRows as unknown as Record<string, unknown>[],
+      },
+    ];
+
+    let v5ExtraUploaded = 0;
+    let v5ExtraVerified = 0;
+    let mediaCleanedCount = 0;
+
+    for (const cat of v5CategoryPayloads) {
+      if (cat.rows.length === 0) continue;
+      v5ExtraUploaded += cat.rows.length;
+      const uploadRes = await uploadAndVerifyV5CategoryBatch({
+        datasetKey: cat.datasetKey,
+        repoKey: cat.repoKey,
+        batchNumber: `${jobNumber}-${cat.datasetKey}`,
+        referenceDate: now,
+        rows: cat.rows,
+      });
+
+      if (uploadRes.verified) {
+        v5ExtraVerified += cat.rows.length;
+        await db
+          .update(archiveRepositories)
+          .set({
+            totalBatchesPushed: sql`${archiveRepositories.totalBatchesPushed} + 1`,
+            totalRecordsArchived: sql`${archiveRepositories.totalRecordsArchived} + ${cat.rows.length}`,
+            estimatedBytesUsed: sql`${archiveRepositories.estimatedBytesUsed} + ${uploadRes.bytesWritten}`,
+            lastPushAt: now,
+            lastVerifiedAt: now,
+            lastCommitSha: uploadRes.commitSha,
+            lastError: null,
+            updatedAt: now,
+          })
+          .where(eq(archiveRepositories.repoKey, cat.repoKey));
+
+        // Only mark expired media posts >= 7 days old as expired in Neon AFTER remote SHA-256 verification succeeds
+        if (cat.datasetKey === "archived_media_posts" && autoClearPrunable) {
+          const expiredIds = expiredMediaRows.map((m) => m.id);
+          await db
+            .update(mediaPosts)
+            .set({ isExpired: true, archivedAt: now })
+            .where(inArray(mediaPosts.id, expiredIds));
+          mediaCleanedCount = expiredIds.length;
+        }
+      } else if (uploadRes.error) {
+        cycleSummary.errors.push({
+          datasetKey: cat.datasetKey as ArchiveDatasetKey,
+          error: uploadRes.error,
+        });
+      }
     }
 
-    const v5ExtraCount =
-      closedPositions.length +
-      closedListings.length +
-      completedJobRows.length +
-      partnershipRows.length +
-      expiredMediaRows.length +
-      govDecisionRows.length;
-
     const totalUploaded =
-      cycleSummary.archivedBatches.reduce((acc, b) => acc + b.recordCount, 0) + v5ExtraCount;
+      cycleSummary.archivedBatches.reduce((acc, b) => acc + b.recordCount, 0) + v5ExtraUploaded;
     const totalVerified =
       cycleSummary.archivedBatches
         .filter((b) => b.stateMachineStatus === "VERIFIED" || b.stateMachineStatus === "COMPLETED")
-        .reduce((acc, b) => acc + b.recordCount, 0) + v5ExtraCount;
+        .reduce((acc, b) => acc + b.recordCount, 0) + v5ExtraVerified;
     const totalCleaned =
       cycleSummary.archivedBatches.reduce((acc, b) => acc + b.clearedCount, 0) +
-      expiredMediaRows.length;
+      mediaCleanedCount;
 
     await updateStage("RUNNING", {
       currentPhase: "VERIFYING",
