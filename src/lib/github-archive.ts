@@ -276,14 +276,31 @@ function createLiveGithubTransport(token: string): GithubArchiveTransport {
         );
       }
 
+      let contentUtf8 = "";
       const json = (await res.json()) as {
         content?: string;
         encoding?: string;
         sha?: string;
         size?: number;
       };
-      const rawB64 = (json.content ?? "").replace(/\s+/g, "");
-      const contentUtf8 = Buffer.from(rawB64, "base64").toString("utf8");
+      if (json.content) {
+        const rawB64 = json.content.replace(/\s+/g, "");
+        contentUtf8 = Buffer.from(rawB64, "base64").toString("utf8");
+      } else {
+        // Fallback for files > 1 MB where GitHub omits `content` from JSON: fetch raw text
+        const rawRes = await fetch(url, {
+          method: "GET",
+          headers: {
+            ...baseHeaders,
+            Accept: "application/vnd.github.raw+json",
+          },
+          cache: "no-store",
+        });
+        if (rawRes.ok) {
+          contentUtf8 = await rawRes.text();
+        }
+      }
+
       return {
         exists: true,
         contentUtf8,
@@ -515,8 +532,8 @@ export function buildPartitionedRepoPaths(params: {
 
 export interface MonthlyPartitionIndex {
   schemaVersion: string;
-  repoKey: GithubArchiveRepoKey;
-  datasetKey: ArchiveDatasetKey;
+  repoKey: GithubArchiveRepoKey | GithubArchiveRepoKeyV5;
+  datasetKey: string;
   yearMonth: string;
   shardGeneration: number;
   updatedAt: string;
@@ -1002,6 +1019,67 @@ export async function uploadAndVerifyV5CategoryBatch(params: {
       contentUtf8: manifestContent,
       commitMessage: `manifest(${params.datasetKey}): ${params.batchNumber} [sha256:${expectedSha256.slice(0, 12)}]`,
     });
+
+    // Step C: Update partitioned monthly index
+    const monthlyIndexPath = `index/${yyyy}-${mm}/${params.datasetKey}.json`;
+    try {
+      const existingIndexFile = await transport.getFile({
+        owner: cfg.owner,
+        repo: repoName,
+        branch: cfg.branch,
+        path: monthlyIndexPath,
+      });
+
+      let indexObj: MonthlyPartitionIndex;
+      if (existingIndexFile.exists && existingIndexFile.contentUtf8) {
+        indexObj = JSON.parse(existingIndexFile.contentUtf8) as MonthlyPartitionIndex;
+      } else {
+        indexObj = {
+          schemaVersion: "V5.0",
+          repoKey: params.repoKey,
+          datasetKey: params.datasetKey as unknown as ArchiveDatasetKey,
+          yearMonth: `${yyyy}-${mm}`,
+          shardGeneration: 1,
+          updatedAt: new Date().toISOString(),
+          totalBatches: 0,
+          totalRecords: 0,
+          batches: [],
+        };
+      }
+
+      const filteredBatches = indexObj.batches.filter(
+        (b) => b.batchNumber !== params.batchNumber,
+      );
+      filteredBatches.push({
+        batchNumber: params.batchNumber,
+        batchPath,
+        manifestPath,
+        recordCount: params.rows.length,
+        jsonlSha256: expectedSha256,
+        zipSha256: expectedSha256,
+        periodStart: params.referenceDate.toISOString(),
+        periodEnd: params.referenceDate.toISOString(),
+        archivedAt: new Date().toISOString(),
+        entityIds: [],
+      });
+
+      indexObj.batches = filteredBatches;
+      indexObj.totalBatches = filteredBatches.length;
+      indexObj.totalRecords = filteredBatches.reduce((acc, b) => acc + b.recordCount, 0);
+      indexObj.updatedAt = new Date().toISOString();
+
+      await transport.putFile({
+        owner: cfg.owner,
+        repo: repoName,
+        branch: cfg.branch,
+        path: monthlyIndexPath,
+        contentUtf8: JSON.stringify(indexObj, null, 2) + "\n",
+        commitMessage: `index(${params.datasetKey}): register ${params.batchNumber} in ${yyyy}-${mm}`,
+        expectedBlobSha: existingIndexFile.blobSha,
+      });
+    } catch {
+      // Best-effort index registration
+    }
 
     const readback = await transport.getFile({
       owner: cfg.owner,
