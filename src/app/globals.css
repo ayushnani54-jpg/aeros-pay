@@ -7,6 +7,7 @@
   --border: #e4e4e4;
   --border-strong: #d0d0d0;
   --surface: #fafafa;
+  --surface-hover: #f4f4f5;
   --danger: #b3261e;
   --danger-bg: #fdecea;
   --success: #146c2e;
@@ -14,19 +15,21 @@
   --accent: #111111;
 }
 
+/* Pure Dark & Grayish Institutional Theme (Zero Neon, Clean Slate/Zinc) */
 :root[data-theme="dark"],
 html.dark {
-  --background: #0d1117;
-  --foreground: #f0f6fc;
-  --muted: #8b949e;
-  --border: #21262d;
-  --border-strong: #30363d;
-  --surface: #161b22;
-  --danger: #f85149;
-  --danger-bg: #3c1e1e;
-  --success: #3fb950;
-  --success-bg: #132e1e;
-  --accent: #58a6ff;
+  --background: #09090b;       /* Pure deep dark (Zinc 950) */
+  --foreground: #f4f4f5;       /* Crisp clean light text (Zinc 100) */
+  --muted: #a1a1aa;            /* Balanced readable gray (Zinc 400) */
+  --border: #27272a;           /* Clean structural border (Zinc 800) */
+  --border-strong: #3f3f46;    /* Distinct divider / card border (Zinc 700) */
+  --surface: #121215;          /* Sleek surface / card background */
+  --surface-hover: #18181b;    /* Hover state (Zinc 900) */
+  --danger: #ef4444;           /* Refined crimson */
+  --danger-bg: #261214;        /* Deep crimson tone */
+  --success: #22c55e;          /* Refined emerald */
+  --success-bg: #0d2818;       /* Deep emerald tone */
+  --accent: #f4f4f5;           /* Clean monochrome accent */
 }
 
 @theme inline {
@@ -49,7 +52,7 @@ body {
 }
 
 .card {
-  background: var(--background);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
 }
@@ -60,13 +63,13 @@ body {
   padding: 0.6rem 0.8rem;
   font-size: 0.95rem;
   width: 100%;
-  background: #ffffff;
+  background: var(--background);
   color: var(--foreground);
 }
 
 .input:focus {
   outline: none;
-  border-color: #111111;
+  border-color: var(--foreground);
 }
 
 .btn {
@@ -96,59 +99,62 @@ body {
 }
 
 .btn-secondary {
-  background: #ffffff;
-  color: #111111;
-  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--foreground);
+  border: 1px solid var(--border);
 }
 .btn-secondary:hover {
-  background: #f4f4f4;
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
 }
 
 .btn-danger {
-  background: #ffffff;
+  background: var(--surface);
   color: var(--danger);
-  border: 1px solid #e3b3ae;
+  border: 1px solid var(--danger);
 }
 .btn-danger:hover {
   background: var(--danger-bg);
 }
 
-/* Dark Mode Overrides */
+/* Pure Dark Mode Refinements */
 html.dark .input {
-  background: #161b22;
-  color: var(--foreground);
-  border-color: var(--border-strong);
+  background: #0f0f12;
+  color: #f4f4f5;
+  border-color: #27272a;
 }
 html.dark .input:focus {
-  border-color: #58a6ff;
+  border-color: #71717a;
 }
 html.dark .btn-primary {
-  background: #f0f6fc;
-  color: #0d1117;
-  border-color: #f0f6fc;
+  background: #f4f4f5;
+  color: #09090b;
+  border-color: #f4f4f5;
 }
 html.dark .btn-primary:hover {
-  background: #c9d1d9;
+  background: #e4e4e7;
+  border-color: #e4e4e7;
 }
 html.dark .btn-secondary {
-  background: #161b22;
-  color: #f0f6fc;
-  border-color: var(--border-strong);
+  background: #121215;
+  color: #f4f4f5;
+  border-color: #27272a;
 }
 html.dark .btn-secondary:hover {
-  background: #21262d;
+  background: #1c1c21;
+  border-color: #3f3f46;
 }
 html.dark .btn-danger {
-  background: #161b22;
-  color: #f85149;
-  border-color: #8b2520;
+  background: #121215;
+  color: #ef4444;
+  border-color: #7f1d1d;
 }
 html.dark .btn-danger:hover {
   background: var(--danger-bg);
 }
 html.dark ::selection {
-  background: #58a6ff;
-  color: #0d1117;
+  background: #3f3f46;
+  color: #f4f4f5;
 }
 
 .badge {
@@ -215,4 +221,3 @@ html, body {
   background: #111111;
   color: #ffffff;
 }
-

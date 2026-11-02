@@ -72,7 +72,7 @@ export function GovControlRoomV5Panel({
           operationTitle="Posting Government Citizen Job"
           processingDetail="Creating public job listing for Citizens..."
           onSuccessReset
-          className="mt-4 rounded-xl border border-border bg-white p-4"
+          className="mt-4 rounded-xl border border-border bg-surface p-4"
         >
           <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted">
             Post a New Government Job for Citizens
@@ -205,7 +205,7 @@ export function GovControlRoomV5Panel({
                       {applicantDisplayName} (@{applicantUsername})
                     </Link>
                   </p>
-                  <p className="mt-1 rounded bg-white/80 p-2 text-foreground">{app.coverNote}</p>
+                  <p className="mt-1 rounded bg-surface p-2 text-foreground">{app.coverNote}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <V5ActionForm

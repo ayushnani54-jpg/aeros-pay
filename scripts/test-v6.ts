@@ -253,8 +253,9 @@ async function runV6VerificationSuite() {
     "GovLoginForm MUST NOT contain seed credential 'G7K2P' as placeholder",
   );
   assert.ok(
-    govLoginFormContent.includes('placeholder="ABCDE"'),
-    "GovLoginForm must use generic placeholder 'ABCDE'",
+    govLoginFormContent.includes('placeholder="••••• (5-character passkey)"') ||
+      govLoginFormContent.includes('placeholder="ABCDE"'),
+    "GovLoginForm must use generic placeholder",
   );
   assert.ok(
     govLoginFormContent.includes("toUpperCase()"),
@@ -401,7 +402,9 @@ async function runV6VerificationSuite() {
     "globals.css must define dark mode selector",
   );
   assert.ok(
-    cssContent.includes("--background: #0d1117") || cssContent.includes("--background: #0f1117"),
+    cssContent.includes("--background: #09090b") ||
+      cssContent.includes("--background: #0d1117") ||
+      cssContent.includes("--background: #0f1117"),
     "globals.css must define dark background token",
   );
 

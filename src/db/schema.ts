@@ -352,7 +352,7 @@ export const government = pgTable("government", {
   passwordHash: text("password_hash").notNull(),
   securityCodeHash: text("security_code_hash").notNull(),
   accessPathCode: varchar("access_path_code", { length: 32 }).notNull().default("2027"),
-  supportEmail: varchar("support_email", { length: 255 }).notNull().default("support@aerospay.com"),
+  supportEmail: varchar("support_email", { length: 255 }).notNull().default("aerospay.official@gmail.com"),
   balance: integer("balance").notNull().default(0),
   totalSupply: integer("total_supply").notNull().default(0),
   taxRateBp: integer("tax_rate_bp").notNull().default(500), // basis points; 500 = 5.00%

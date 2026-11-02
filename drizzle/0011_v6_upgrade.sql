@@ -36,7 +36,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "users_auth_email_idx" ON "users" ("auth_email
 
 -- 2. Safe Columns on government table
 ALTER TABLE "government" ADD COLUMN IF NOT EXISTS "access_path_code" varchar(32) DEFAULT '2027' NOT NULL;
-ALTER TABLE "government" ADD COLUMN IF NOT EXISTS "support_email" varchar(255) DEFAULT 'support@aerospay.com' NOT NULL;
+ALTER TABLE "government" ADD COLUMN IF NOT EXISTS "support_email" varchar(255) DEFAULT 'aerospay.official@gmail.com' NOT NULL;
 
 -- 3. Email Verification Codes table
 CREATE TABLE IF NOT EXISTS "email_verification_codes" (
@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS "government_public_content" (
 -- Seed default public content & community links
 INSERT INTO "government_public_content" ("key", "value", "label", "enabled", "is_private", "sort_order")
 VALUES
-  ('support_email', 'support@aerospay.com', 'Official Support Email', true, false, 1),
+  ('support_email', 'aerospay.official@gmail.com', 'Official Support Email', true, false, 1),
   ('instagram_url', 'https://instagram.com/aerospay', 'Instagram Community', true, false, 2),
   ('whatsapp_community_url', 'https://chat.whatsapp.com/invite/aerospay-community', 'WhatsApp Community', true, false, 3),
   ('whatsapp_group_url', 'https://chat.whatsapp.com/invite/aerospay-official', 'WhatsApp Official Group', true, false, 4),

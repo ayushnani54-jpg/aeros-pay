@@ -85,7 +85,7 @@ export function GovPartnershipsV5Panel({
                       Initiator: <strong>{item.initiatorName}</strong> (@{item.initiatorUsername}) ↔
                       Partner: <strong>{item.partnerName}</strong> (@{item.partnerUsername})
                     </p>
-                    <p className="mt-1.5 rounded border border-amber-200 bg-white/80 p-2 text-xs text-foreground">
+                    <p className="mt-1.5 rounded border border-border bg-surface p-2 text-xs text-foreground">
                       {p.termsDescription}
                     </p>
                   </div>

@@ -141,7 +141,7 @@ export function CompanyPartnershipsPanel({
                       <button
                         type="button"
                         onClick={() => setInitiatorPct(50)}
-                        className="rounded border border-border bg-white px-2 py-1 font-mono text-[11px] font-semibold"
+                        className="rounded border border-border bg-surface px-2 py-1 font-mono text-[11px] font-semibold hover:bg-surface-hover"
                       >
                         50/50
                       </button>

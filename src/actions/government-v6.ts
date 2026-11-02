@@ -5,6 +5,7 @@ import { setFeatureFlag } from "@/lib/feature-governance";
 import { generateGovernmentActivationCode } from "@/lib/government-activation";
 import { db, ensureV5SchemaMigrated } from "@/db/client";
 import { governmentPublicContent, users } from "@/db/schema";
+import { DEFAULT_PUBLIC_CONTENT } from "@/lib/public-content";
 import { eq } from "drizzle-orm";
 import type { ActionResult } from "./auth";
 import { revalidatePath } from "next/cache";
@@ -97,20 +98,35 @@ export async function updateGovernmentPublicContentAction(
 
   try {
     await ensureV5SchemaMigrated();
+    const def = DEFAULT_PUBLIC_CONTENT[key];
+    const label = def?.label || key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    const isPrivate = def?.isPrivate ?? false;
+
+    // Use UPSERT so new or unseeded keys persist reliably
     await db
-      .update(governmentPublicContent)
-      .set({
+      .insert(governmentPublicContent)
+      .values({
+        key,
         value,
+        label,
+        isPrivate,
         updatedBy: gov.username,
         updatedAt: new Date(),
       })
-      .where(eq(governmentPublicContent.key, key));
+      .onConflictDoUpdate({
+        target: governmentPublicContent.key,
+        set: {
+          value,
+          updatedBy: gov.username,
+          updatedAt: new Date(),
+        },
+      });
 
     revalidatePath("/gov/control-room");
     revalidatePath("/");
     return {
       ok: true,
-      message: `Public link '${key}' updated successfully.`,
+      message: `Platform setting '${label || key}' updated successfully to '${value}'.`,
     };
   } catch (err: unknown) {
     return {

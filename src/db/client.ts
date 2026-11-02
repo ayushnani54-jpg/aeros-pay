@@ -340,7 +340,7 @@ const V5_AUTO_MIGRATION_STATEMENTS: string[] = [
   `CREATE UNIQUE INDEX IF NOT EXISTS "users_auth_email_idx" ON "users" ("auth_email") WHERE "auth_email" IS NOT NULL`,
 
   `ALTER TABLE "government" ADD COLUMN IF NOT EXISTS "access_path_code" varchar(32) DEFAULT '2027' NOT NULL`,
-  `ALTER TABLE "government" ADD COLUMN IF NOT EXISTS "support_email" varchar(255) DEFAULT 'support@aerospay.com' NOT NULL`,
+  `ALTER TABLE "government" ADD COLUMN IF NOT EXISTS "support_email" varchar(255) DEFAULT 'aerospay.official@gmail.com' NOT NULL`,
 
   `CREATE TABLE IF NOT EXISTS "email_verification_codes" (
     "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -406,7 +406,7 @@ const V5_AUTO_MIGRATION_STATEMENTS: string[] = [
   )`,
   `INSERT INTO "government_public_content" ("key", "value", "label", "enabled", "is_private", "sort_order")
    VALUES
-    ('support_email', 'support@aerospay.com', 'Official Support Email', true, false, 1),
+    ('support_email', 'aerospay.official@gmail.com', 'Official Support Email', true, false, 1),
     ('instagram_url', 'https://instagram.com/aerospay', 'Instagram Community', true, false, 2),
     ('whatsapp_community_url', 'https://chat.whatsapp.com/invite/aerospay-community', 'WhatsApp Community', true, false, 3),
     ('whatsapp_group_url', 'https://chat.whatsapp.com/invite/aerospay-official', 'WhatsApp Official Group', true, false, 4),

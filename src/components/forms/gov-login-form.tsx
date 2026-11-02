@@ -43,7 +43,7 @@ export function GovLoginForm({ pathCode }: { pathCode?: string }) {
           id="securityCode"
           name="securityCode"
           className="input font-mono tracking-widest uppercase"
-          placeholder="ABCDE"
+          placeholder="••••• (5-character passkey)"
           value={securityCode}
           onChange={(e) => setSecurityCode(e.target.value.toUpperCase())}
           autoComplete="off"

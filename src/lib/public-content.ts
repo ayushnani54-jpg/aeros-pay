@@ -5,7 +5,7 @@ import { asc, eq } from "drizzle-orm";
 
 export const DEFAULT_PUBLIC_CONTENT: Record<string, { value: string; label: string; isPrivate: boolean }> = {
   support_email: {
-    value: "support@aerospay.com",
+    value: "aerospay.official@gmail.com",
     label: "Official Support Email",
     isPrivate: false,
   },

@@ -5,7 +5,7 @@ import { getPublicCommunityContent } from "@/lib/public-content";
 export default async function SupportPage() {
   const user = await getCurrentUser();
   const communityContent = await getPublicCommunityContent();
-  const supportEmail = communityContent.support_email || "support@aerospay.com";
+  const supportEmail = communityContent.support_email || "aerospay.official@gmail.com";
 
   return (
     <div className="mx-auto max-w-3xl space-y-8 px-4 py-8 sm:px-6">

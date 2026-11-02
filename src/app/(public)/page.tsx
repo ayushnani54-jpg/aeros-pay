@@ -19,7 +19,7 @@ export default async function HomePage() {
 
   const flagsMap = Object.fromEntries(flags.map((f) => [f.id, f.enabled]));
 
-  const supportEmail = communityContent.support_email || "support@aerospay.com";
+  const supportEmail = communityContent.support_email || "aerospay.official@gmail.com";
   const instagramUrl = communityContent.instagram_url || "https://instagram.com/aerospay";
   const whatsappCommunityUrl = communityContent.whatsapp_community_url || "https://chat.whatsapp.com/invite/aerospay-community";
   const interdreamUrl = communityContent.interdream_url || "https://interdream.io/c/aerospay";

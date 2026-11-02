@@ -237,8 +237,8 @@ export function HedgeTradingPanel({
               onClick={() => setSide("BUY")}
               className={`rounded-lg border px-3 py-2.5 text-center transition-all ${
                 side === "BUY"
-                  ? "border-[#146c2e] bg-[#146c2e] text-white shadow-xs"
-                  : "border-border bg-surface text-foreground hover:bg-emerald-50"
+                  ? "border-emerald-600 bg-emerald-600 text-white shadow-xs"
+                  : "border-border bg-surface text-foreground hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
               }`}
             >
               <div className="text-sm font-bold">BUY (LONG)</div>
@@ -249,8 +249,8 @@ export function HedgeTradingPanel({
               onClick={() => setSide("SELL")}
               className={`rounded-lg border px-3 py-2.5 text-center transition-all ${
                 side === "SELL"
-                  ? "border-[#b3261e] bg-[#b3261e] text-white shadow-xs"
-                  : "border-border bg-surface text-foreground hover:bg-red-50"
+                  ? "border-rose-600 bg-rose-600 text-white shadow-xs"
+                  : "border-border bg-surface text-foreground hover:bg-rose-50 dark:hover:bg-rose-950/30"
               }`}
             >
               <div className="text-sm font-bold">SELL (SHORT)</div>
@@ -367,7 +367,9 @@ export function HedgeTradingPanel({
                     <span className="text-muted">Position Direction:</span>
                     <span
                       className={`font-bold ${
-                        side === "BUY" ? "text-[#146c2e]" : "text-[#b3261e]"
+                        side === "BUY"
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-rose-600 dark:text-rose-400"
                       }`}
                     >
                       {side === "BUY" ? "LONG (BUY)" : "SHORT (SELL)"} · Independent Position
@@ -403,8 +405,8 @@ export function HedgeTradingPanel({
                   }
                   className={`btn w-full font-semibold text-white ${
                     side === "BUY"
-                      ? "bg-[#146c2e] hover:bg-[#0f5323]"
-                      : "bg-[#b3261e] hover:bg-[#8f1e17]"
+                      ? "bg-emerald-600 hover:bg-emerald-700"
+                      : "bg-rose-600 hover:bg-rose-700"
                   } disabled:opacity-50`}
                 >
                   {pending
@@ -492,8 +494,8 @@ export function HedgeTradingPanel({
                             <span
                               className={`rounded px-2 py-0.5 text-[11px] font-bold ${
                                 pos.direction === "LONG"
-                                  ? "bg-[#eaf7ee] text-[#146c2e]"
-                                  : "bg-[#fdecea] text-[#b3261e]"
+                                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                                  : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
                               }`}
                             >
                               {pos.direction === "LONG" ? "BUY · LONG" : "SELL · SHORT"}
@@ -572,7 +574,9 @@ export function HedgeTradingPanel({
                             <span className="text-[11px] text-muted">Live Unrealized P&amp;L</span>
                             <p
                               className={`font-mono font-bold ${
-                                currentLivePnl >= 0 ? "text-[#146c2e]" : "text-[#b3261e]"
+                                currentLivePnl >= 0
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : "text-rose-600 dark:text-rose-400"
                               }`}
                             >
                               {currentLivePnl >= 0 ? "+" : ""}
@@ -607,8 +611,8 @@ export function HedgeTradingPanel({
                         <span
                           className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
                             pos.direction === "LONG"
-                              ? "bg-[#eaf7ee] text-[#146c2e]"
-                              : "bg-[#fdecea] text-[#b3261e]"
+                              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                              : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
                           }`}
                         >
                           {pos.direction} {pos.leverage}x
@@ -622,7 +626,9 @@ export function HedgeTradingPanel({
                     </div>
                     <div
                       className={`font-mono font-bold ${
-                        (pos.realizedPnl ?? 0) >= 0 ? "text-[#146c2e]" : "text-[#b3261e]"
+                        (pos.realizedPnl ?? 0) >= 0
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-rose-600 dark:text-rose-400"
                       }`}
                     >
                       {(pos.realizedPnl ?? 0) >= 0 ? "+" : ""}
@@ -652,8 +658,8 @@ export function HedgeTradingPanel({
                       key={tier}
                       className={`flex-1 rounded-md border py-2 text-center font-mono text-xs font-bold ${
                         tier <= userMaxLeverage
-                          ? "border-emerald-600 bg-[#eaf7ee] text-[#146c2e]"
-                          : "border-border bg-white text-muted"
+                          ? "border-emerald-600 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                          : "border-border bg-surface text-muted"
                       }`}
                     >
                       {tier}x {tier <= userMaxLeverage ? "✓" : "🔒"}
@@ -705,7 +711,7 @@ export function HedgeTradingPanel({
                   )}
                 </V5ActionForm>
               ) : (
-                <div className="rounded-lg bg-[#eaf7ee] p-3 text-xs font-medium text-[#146c2e]">
+                <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-3 text-xs font-medium text-emerald-600 dark:text-emerald-400">
                   You have unlocked the maximum 10x leverage tier permitted in Aeros Pay.
                 </div>
               )}
@@ -766,7 +772,7 @@ export function HedgeTradingPanel({
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-lg border border-border p-3">
-                  <p className="font-bold text-[#146c2e]">1. BUY (Long Position)</p>
+                  <p className="font-bold text-emerald-600 dark:text-emerald-400">1. BUY (Long Position)</p>
                   <p className="mt-1 text-muted">
                     Opening a <strong>BUY</strong> position creates an independent{" "}
                     <strong>LONG</strong> trade. You profit when the Market Index rises above your
@@ -775,7 +781,7 @@ export function HedgeTradingPanel({
                 </div>
 
                 <div className="rounded-lg border border-border p-3">
-                  <p className="font-bold text-[#b3261e]">2. SELL (Short Position)</p>
+                  <p className="font-bold text-rose-600 dark:text-rose-400">2. SELL (Short Position)</p>
                   <p className="mt-1 text-muted">
                     Opening a <strong>SELL</strong> position creates an independent{" "}
                     <strong>SHORT</strong> trade. You profit when the Market Index falls below your

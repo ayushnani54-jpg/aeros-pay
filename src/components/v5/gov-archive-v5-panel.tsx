@@ -157,10 +157,10 @@ export function GovArchiveV5Panel({
                   key={stage}
                   className={`rounded-lg border px-2 py-1.5 text-center text-[10px] font-bold ${
                     isCompleted
-                      ? "border-emerald-300 bg-[#eaf7ee] text-[#146c2e]"
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
                       : isCurrent
-                        ? "border-amber-400 bg-amber-100 text-amber-950"
-                        : "border-border bg-white text-muted"
+                        ? "border-amber-500/40 bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                        : "border-border bg-surface text-muted"
                   }`}
                 >
                   {idx + 1}. {stage.replace("_", " ")}

@@ -762,14 +762,15 @@ export function SyntheticMarketTerminal({
                         y1={y}
                         x2={chartGeometry.width - chartGeometry.padRight}
                         y2={y}
-                        stroke="#e5e5e0"
+                        stroke="var(--border, #e5e5e0)"
                         strokeDasharray="3 3"
+                        opacity={0.6}
                       />
                       <text
                         x={chartGeometry.padLeft - 8}
                         y={y + 4}
                         textAnchor="end"
-                        className="fill-[#6b6b66] font-mono text-[10px]"
+                        className="fill-muted font-mono text-[10px]"
                       >
                         {tick}
                       </text>
@@ -814,7 +815,7 @@ export function SyntheticMarketTerminal({
                   y1={chartGeometry.padTop + chartGeometry.priceH + 6}
                   x2={chartGeometry.width - chartGeometry.padRight}
                   y2={chartGeometry.padTop + chartGeometry.priceH + 6}
-                  stroke="#d5d5d0"
+                  stroke="var(--border, #d5d5d0)"
                 />
 
                 {/* Candles + Volume bars for the visible window */}

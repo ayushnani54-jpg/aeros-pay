@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { submitSupportAction } from "@/actions/support";
 
-export function SupportForm({ defaultEmail = "", username = "" }: { defaultEmail?: string; username?: string }) {
+export function SupportForm(props: { defaultEmail?: string; username?: string }) {
+  const defaultEmail = props.defaultEmail || "";
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successTicket, setSuccessTicket] = useState<string | null>(null);

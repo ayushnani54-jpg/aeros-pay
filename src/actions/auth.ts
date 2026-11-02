@@ -24,6 +24,7 @@ import {
   createEmailVerificationChallenge,
   verifyEmailCode,
 } from "@/lib/email-verification";
+import { dispatchVerificationEmail } from "@/lib/email-dispatch";
 import { consumeGovernmentActivationCode } from "@/lib/government-activation";
 import { requireUser } from "@/lib/auth";
 import { recordAudit } from "@/lib/audit";
@@ -358,10 +359,17 @@ export async function v6InitiateRegistrationAction(
       passwordHash,
     });
 
+    // Dispatches code securely to the recipient email
+    await dispatchVerificationEmail({
+      toEmail: normalizedEmail,
+      code: challenge.code,
+      username,
+    });
+
     return {
       ok: true,
       data: { email: normalizedEmail },
-      message: `An 8-digit verification code has been generated for ${normalizedEmail}. Code: ${challenge.code}`,
+      message: `An 8-digit verification code has been dispatched to ${normalizedEmail}. Please check your inbox and enter the code below.`,
     };
   } catch (err: unknown) {
     return {
@@ -525,10 +533,16 @@ export async function v6SubmitExistingUserEmailAction(
       username: user.username,
     });
 
+    await dispatchVerificationEmail({
+      toEmail: normalizedEmail,
+      code: challenge.code,
+      username: user.username,
+    });
+
     return {
       ok: true,
       data: { email: normalizedEmail },
-      message: `An 8-digit verification code has been issued for ${normalizedEmail}. Code: ${challenge.code}`,
+      message: `An 8-digit verification code has been dispatched to ${normalizedEmail}. Please check your inbox.`,
     };
   } catch (err: unknown) {
     return {

@@ -3,6 +3,7 @@ import "./globals.css";
 import { APP_NAME } from "@/lib/constants";
 import { PwaRegister } from "@/components/offline/pwa-register";
 import { ThemeProvider } from "@/components/theme/theme-provider";
+import { ReleaseUpdatePrompt } from "@/components/v6/release-update-prompt";
 
 export const metadata: Metadata = {
   title: {
@@ -17,7 +18,7 @@ export const metadata: Metadata = {
 export const viewport = {
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#0d1117" },
+    { media: "(prefers-color-scheme: dark)", color: "#09090b" },
   ],
 };
 
@@ -53,6 +54,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-full flex flex-col bg-background text-foreground transition-colors duration-150">
         <ThemeProvider>
           <PwaRegister />
+          <ReleaseUpdatePrompt />
           {children}
         </ThemeProvider>
       </body>
