@@ -360,16 +360,20 @@ export async function v6InitiateRegistrationAction(
     });
 
     // Dispatches code securely to the recipient email
-    await dispatchVerificationEmail({
+    const dispatchResult = await dispatchVerificationEmail({
       toEmail: normalizedEmail,
       code: challenge.code,
       username,
     });
 
+    const userMessage = dispatchResult.delivered
+      ? `An 8-digit verification code has been dispatched to ${normalizedEmail}. Please check your inbox and enter the code below.`
+      : `An 8-digit verification code has been generated for ${normalizedEmail}. (Note: To receive real emails in your inbox, add RESEND_API_KEY in Vercel. For testing, your verification code is: ${challenge.code})`;
+
     return {
       ok: true,
       data: { email: normalizedEmail },
-      message: `An 8-digit verification code has been dispatched to ${normalizedEmail}. Please check your inbox and enter the code below.`,
+      message: userMessage,
     };
   } catch (err: unknown) {
     return {
@@ -533,16 +537,20 @@ export async function v6SubmitExistingUserEmailAction(
       username: user.username,
     });
 
-    await dispatchVerificationEmail({
+    const dispatchResult = await dispatchVerificationEmail({
       toEmail: normalizedEmail,
       code: challenge.code,
       username: user.username,
     });
 
+    const userMessage = dispatchResult.delivered
+      ? `An 8-digit verification code has been dispatched to ${normalizedEmail}. Please check your inbox.`
+      : `An 8-digit verification code has been issued for ${normalizedEmail}. (Note: Add RESEND_API_KEY in Vercel to send real emails. For testing, your verification code is: ${challenge.code})`;
+
     return {
       ok: true,
       data: { email: normalizedEmail },
-      message: `An 8-digit verification code has been dispatched to ${normalizedEmail}. Please check your inbox.`,
+      message: userMessage,
     };
   } catch (err: unknown) {
     return {
