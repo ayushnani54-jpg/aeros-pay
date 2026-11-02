@@ -41,23 +41,58 @@ export default async function PublicUserProfile({ params }: PageProps<"/u/[usern
       </Link>
 
       <div className="card p-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{person.displayName}</h1>
-            <p className="mt-1 font-mono text-sm text-muted">@{person.username}</p>
-            <div className="mt-2">
-              <UserBadges official={badges.official} member={badges.member} />
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-4">
+            <div className="h-16 w-16 rounded-full bg-surface border border-border flex items-center justify-center font-bold text-xl text-foreground select-none">
+              {person.displayName.slice(0, 2).toUpperCase()}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold tracking-tight text-foreground">{person.displayName}</h1>
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold ${
+                  person.accessLevel === "ACTIVE_MEMBER"
+                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    : "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                }`}>
+                  {person.accessLevel === "ACTIVE_MEMBER" ? "ACTIVE CITIZEN" : "LIMITED CITIZEN"}
+                </span>
+              </div>
+              <p className="mt-0.5 font-mono text-sm text-muted">@{person.username}</p>
+              <div className="mt-2">
+                <UserBadges official={badges.official} member={badges.member} />
+              </div>
             </div>
           </div>
           <StatusBadge status={status} />
         </div>
 
-        <p className="mt-4 text-sm text-muted">
-          Member since {formatDate(person.createdAt)}
-        </p>
+        {person.bio && (
+          <div className="mt-4 p-3.5 rounded-lg bg-surface text-sm text-foreground border border-border/70">
+            <p className="text-xs font-semibold uppercase text-muted mb-1">About</p>
+            <p className="whitespace-pre-line leading-relaxed">{person.bio}</p>
+          </div>
+        )}
+
+        <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-muted">
+          <span>Member since {formatDate(person.createdAt)}</span>
+          {person.publicContactEmail && (
+            <>
+              <span>•</span>
+              <span>
+                Public Contact:{" "}
+                <a
+                  href={`mailto:${person.publicContactEmail}`}
+                  className="font-semibold text-foreground underline"
+                >
+                  {person.publicContactEmail}
+                </a>
+              </span>
+            </>
+          )}
+        </div>
 
         {(badges.official || badges.member) && (
-          <p className="mt-2 text-xs text-muted">
+          <p className="mt-3 text-xs text-muted">
             {badges.official
               ? "Linked by the Government as an Official Government User."
               : "Tagged by the Government as a Government Member."}{" "}
@@ -71,7 +106,7 @@ export default async function PublicUserProfile({ params }: PageProps<"/u/[usern
             Pay {person.displayName}
           </Link>
         )}
-        {isSelf && <p className="mt-5 text-sm text-muted">This is you.</p>}
+        {isSelf && <p className="mt-5 text-sm text-muted">This is your public citizen profile.</p>}
       </div>
 
       {companies.length > 0 && (

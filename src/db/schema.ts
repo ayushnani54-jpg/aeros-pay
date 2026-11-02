@@ -351,6 +351,8 @@ export const government = pgTable("government", {
   username: varchar("username", { length: 64 }).notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   securityCodeHash: text("security_code_hash").notNull(),
+  accessPathCode: varchar("access_path_code", { length: 32 }).notNull().default("2027"),
+  supportEmail: varchar("support_email", { length: 255 }).notNull().default("support@aerospay.com"),
   balance: integer("balance").notNull().default(0),
   totalSupply: integer("total_supply").notNull().default(0),
   taxRateBp: integer("tax_rate_bp").notNull().default(500), // basis points; 500 = 5.00%
@@ -550,11 +552,28 @@ export const users = pgTable("users", {
   balance: integer("balance").notNull().default(0),
   status: accountStatusEnum("status").notNull().default("ACTIVE"),
   registrationCodeId: uuid("registration_code_id")
-    .notNull()
     .references(() => registrationCodes.id),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
+
+  // --- V6: Identity, Email Verification & Privacy Infrastructure -----------
+  authEmail: varchar("auth_email", { length: 255 }),
+  authEmailVerified: boolean("auth_email_verified").notNull().default(false),
+  authEmailVerifiedAt: timestamp("auth_email_verified_at", { withTimezone: true }),
+  publicContactEmail: varchar("public_contact_email", { length: 255 }),
+  phoneNumber: varchar("phone_number", { length: 32 }),
+  phoneVerified: boolean("phone_verified").notNull().default(false),
+  phoneVerifiedAt: timestamp("phone_verified_at", { withTimezone: true }),
+  whatsappConsent: boolean("whatsapp_consent").notNull().default(false),
+  whatsappConsentAt: timestamp("whatsapp_consent_at", { withTimezone: true }),
+  phoneReminderLastDismissedAt: timestamp("phone_reminder_last_dismissed_at", { withTimezone: true }),
+  phoneReminderOptOut: boolean("phone_reminder_opt_out").notNull().default(false),
+  accessLevel: varchar("access_level", { length: 32 }).notNull().default("VERIFIED_LIMITED"),
+  emailMigrationRequired: boolean("email_migration_required").notNull().default(false),
+  themePreference: varchar("theme_preference", { length: 16 }).notNull().default("system"),
+  bio: text("bio"),
+  avatarUrl: text("avatar_url"),
 
   // --- V2: timed suspension -------------------------------------------------
   // When status = SUSPENDED and suspendedUntil is in the past, the account is
@@ -2926,6 +2945,118 @@ export type MediaPost = typeof mediaPosts.$inferSelect;
 export type MediaComment = typeof mediaComments.$inferSelect;
 export type MediaLike = typeof mediaLikes.$inferSelect;
 export type MediaShare = typeof mediaShares.$inferSelect;
+
+// =============================================================================
+// V6 TABLES: Identity, Feature Governance, Content & Support
+// =============================================================================
+
+export const emailVerificationCodes = pgTable(
+  "email_verification_codes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    email: varchar("email", { length: 255 }).notNull(),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+    username: varchar("username", { length: 32 }),
+    passwordHash: text("password_hash"),
+    codeHash: varchar("code_hash", { length: 128 }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    ipAddress: varchar("ip_address", { length: 45 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    index("email_verif_email_idx").on(t.email),
+    index("email_verif_user_idx").on(t.userId),
+  ]),
+);
+
+export const governmentActivationCodes = pgTable(
+  "government_activation_codes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    codeHash: varchar("code_hash", { length: 128 }).notNull().unique(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    generatedBy: varchar("generated_by", { length: 64 }).notNull().default("GOVERNMENT"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    consumedByUserId: uuid("consumed_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    status: varchar("status", { length: 20 }).notNull().default("ACTIVE"),
+    adminNotes: text("admin_notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    index("gov_activation_user_idx").on(t.userId),
+    index("gov_activation_status_idx").on(t.status),
+  ]),
+);
+
+export const platformFeatureFlags = pgTable(
+  "platform_feature_flags",
+  {
+    id: varchar("id", { length: 64 }).primaryKey(),
+    enabled: boolean("enabled").notNull().default(true),
+    displayName: varchar("display_name", { length: 120 }).notNull(),
+    description: text("description").notNull(),
+    reason: text("reason"),
+    updatedBy: varchar("updated_by", { length: 64 }).notNull().default("GOVERNMENT"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
+export const governmentPublicContent = pgTable(
+  "government_public_content",
+  {
+    key: varchar("key", { length: 64 }).primaryKey(),
+    value: text("value").notNull(),
+    label: varchar("label", { length: 120 }).notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    isPrivate: boolean("is_private").notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
+    updatedBy: varchar("updated_by", { length: 64 }).notNull().default("GOVERNMENT"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
+export const supportRequests = pgTable(
+  "support_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ticketNumber: varchar("ticket_number", { length: 32 }).notNull().unique(),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    username: varchar("username", { length: 32 }),
+    email: varchar("email", { length: 255 }).notNull(),
+    category: varchar("category", { length: 32 }).notNull(),
+    subject: varchar("subject", { length: 200 }).notNull(),
+    description: text("description").notNull(),
+    severity: varchar("severity", { length: 20 }).notNull().default("NORMAL"),
+    relevantModule: varchar("relevant_module", { length: 64 }),
+    stepsToReproduce: text("steps_to_reproduce"),
+    expectedBehaviour: text("expected_behaviour"),
+    actualBehaviour: text("actual_behaviour"),
+    deliveryStatus: varchar("delivery_status", { length: 32 }).notNull().default("PENDING"),
+    web3formsMessageId: varchar("web3forms_message_id", { length: 120 }),
+    deliveryError: text("delivery_error"),
+    retryCount: integer("retry_count").notNull().default(0),
+    userAgent: text("user_agent"),
+    ipAddress: varchar("ip_address", { length: 45 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ([
+    index("support_req_ticket_idx").on(t.ticketNumber),
+    index("support_req_user_idx").on(t.userId),
+    index("support_req_status_idx").on(t.deliveryStatus),
+  ]),
+);
+
+// --- V6 Types ---------------------------------------------------------------
+export type EmailVerificationCode = typeof emailVerificationCodes.$inferSelect;
+export type GovernmentActivationCode = typeof governmentActivationCodes.$inferSelect;
+export type PlatformFeatureFlag = typeof platformFeatureFlags.$inferSelect;
+export type GovernmentPublicContent = typeof governmentPublicContent.$inferSelect;
+export type SupportRequest = typeof supportRequests.$inferSelect;
+
 
 
 

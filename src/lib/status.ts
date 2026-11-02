@@ -62,6 +62,36 @@ export function canUserCreateCompany(user: SuspendableUser): boolean {
   return effectiveUserStatus(user) === "ACTIVE";
 }
 
+export type TransactableUser = SuspendableUser & {
+  authEmailVerified?: boolean | null;
+  accessLevel?: string | null;
+  emailMigrationRequired?: boolean | null;
+};
+
+/**
+ * V6 Invariant: Financial and economic actions (transfers, marketplace buys/listings,
+ * company creation, job bounties, contract commitments) require:
+ * 1. Effective status ACTIVE (not suspended or banned).
+ * 2. Mandatory verified email (authEmailVerified === true).
+ * 3. Fully activated membership (accessLevel === "ACTIVE_MEMBER").
+ * 4. No pending email migration.
+ */
+export function canUserTransact(user: TransactableUser): boolean {
+  if (effectiveUserStatus(user) !== "ACTIVE") return false;
+  if (user.authEmailVerified === false) return false;
+  if (user.accessLevel && user.accessLevel !== "ACTIVE_MEMBER") return false;
+  if (user.emailMigrationRequired === true) return false;
+  return true;
+}
+
+/**
+ * Returns true if the user has completed email verification but has not yet
+ * been granted full membership via Government activation code.
+ */
+export function isUserLimited(user: TransactableUser): boolean {
+  return user.accessLevel === "VERIFIED_LIMITED" || user.accessLevel === "UNVERIFIED";
+}
+
 // ---------------------------------------------------------------------------
 // Companies
 // ---------------------------------------------------------------------------

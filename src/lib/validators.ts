@@ -108,6 +108,74 @@ export const registerSchema = z.object({
   registrationCode: registrationCodeSchema,
 });
 
+// --- V6 Schemas -------------------------------------------------------------
+export const emailSchema = z
+  .string()
+  .trim()
+  .email("Please provide a valid email address.")
+  .max(255, "Email address is too long.");
+
+export const v6RegisterInitiateSchema = z.object({
+  username: usernameSchema,
+  email: emailSchema,
+  password: passwordSchema,
+  displayName: displayNameSchema.optional(),
+});
+
+export const v6EmailVerifySchema = z.object({
+  email: emailSchema,
+  code: z
+    .string()
+    .trim()
+    .length(8, "Verification code must be exactly 8 digits.")
+    .regex(/^\d{8}$/, "Verification code must be numeric only."),
+});
+
+export const v6ActivateGovCodeSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .length(6, "Government activation code must be exactly 6 digits.")
+    .regex(/^\d{6}$/, "Activation code must be numeric only."),
+});
+
+export const v6ExistingUserEmailSchema = z.object({
+  email: emailSchema,
+});
+
+export const v6PhoneUpdateSchema = z.object({
+  phoneNumber: z
+    .string()
+    .trim()
+    .regex(/^\+[1-9]\d{7,14}$/, "Phone number must be valid E.164 format (e.g. +919876543210)")
+    .or(z.literal(""))
+    .optional(),
+  whatsappConsent: z.boolean().optional(),
+  publicContactEmail: emailSchema.or(z.literal("")).optional(),
+  bio: z.string().max(500, "Bio cannot exceed 500 characters.").optional(),
+});
+
+export const supportRequestSchema = z.object({
+  email: emailSchema,
+  category: z.enum([
+    "GENERAL",
+    "BUG_REPORT",
+    "TECHNICAL",
+    "ACCOUNT_ACCESS",
+    "FEATURE_REQUEST",
+    "FEEDBACK",
+    "OTHER",
+  ]),
+  severity: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]).default("NORMAL"),
+  subject: z.string().trim().min(3, "Subject must be at least 3 characters.").max(200),
+  description: z.string().trim().min(10, "Description must be at least 10 characters.").max(5000),
+  relevantModule: z.string().trim().max(64).optional(),
+  stepsToReproduce: z.string().trim().max(2000).optional(),
+  expectedBehaviour: z.string().trim().max(1000).optional(),
+  actualBehaviour: z.string().trim().max(1000).optional(),
+  botcheck: z.string().optional(),
+});
+
 export const loginSchema = z.object({
   username: z.string().trim().min(1, "Username is required."),
   password: z.string().min(1, "Password is required."),

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { APP_NAME } from "@/lib/constants";
 import { PwaRegister } from "@/components/offline/pwa-register";
+import { ThemeProvider } from "@/components/theme/theme-provider";
 
 export const metadata: Metadata = {
   title: {
@@ -10,29 +11,50 @@ export const metadata: Metadata = {
   },
   description:
     "Aeros Pay is a private, closed-loop virtual economy for a small community — hold and transfer Aeros digitally.",
-  // PWA shell: installable, with the last-synchronized dashboard state
-  // available offline. See public/manifest.json and public/sw.js.
-  //
-  // Deliberately NOT setting `icons` here: this app already has its real
-  // favicon/app-icon defined via Next's file convention (src/app/icon.svg,
-  // src/app/favicon.ico, src/app/apple-icon.tsx) — an explicit `icons` field
-  // in metadata takes precedence over those, and public/pwa-icon.svg (the
-  // PWA install/home-screen icon referenced from manifest.json) is a
-  // separate, additive concern that must never override the site's actual
-  // favicon.
   manifest: "/manifest.json",
 };
 
 export const viewport = {
-  themeColor: "#111111",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#0d1117" },
+  ],
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+const themeScript = `
+(function() {
+  try {
+    var stored = localStorage.getItem('aeros-theme');
+    var isDark = false;
+    if (stored === 'dark') {
+      isDark = true;
+    } else if (stored === 'light') {
+      isDark = false;
+    } else {
+      isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+      document.documentElement.setAttribute('data-theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      document.documentElement.removeAttribute('data-theme');
+    }
+  } catch (e) {}
+})();
+`;
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="h-full antialiased">
-      <body className="min-h-full flex flex-col bg-background text-foreground">
-        <PwaRegister />
-        {children}
+    <html lang="en" className="h-full antialiased" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
+      <body className="min-h-full flex flex-col bg-background text-foreground transition-colors duration-150">
+        <ThemeProvider>
+          <PwaRegister />
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   );

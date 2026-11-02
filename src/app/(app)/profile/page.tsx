@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getActingContext, getOwnedCompanies } from "@/lib/auth";
 import { ProfileForm } from "@/components/forms/profile-form";
+import { V6ProfileSettings } from "@/components/forms/v6-profile-settings-form";
 import { ChangePasswordForm } from "@/components/forms/change-password-form";
 import { StatusBadge, UserBadges, CompanyStatusBadge } from "@/components/status-badge";
 import { badgesOf } from "@/lib/badges";
@@ -174,6 +175,9 @@ export default async function ProfilePage() {
           ))}
         </div>
       </section>
+
+      {/* V6 Profile, Privacy & Activation Settings */}
+      <V6ProfileSettings user={user} />
 
       <section className="card p-5">
         <h2 className="mb-3 font-medium">Display name</h2>

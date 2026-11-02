@@ -1,18 +1,26 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { govLoginAction } from "@/actions/auth";
 
-export function GovLoginForm() {
+export function GovLoginForm({ pathCode }: { pathCode?: string }) {
   const [state, formAction, pending] = useActionState(govLoginAction, null);
+  const [securityCode, setSecurityCode] = useState("");
 
   return (
     <form action={formAction} className="space-y-4">
+      {pathCode && <input type="hidden" name="pathCode" value={pathCode} />}
       <div>
         <label htmlFor="username" className="mb-1 block text-sm font-medium">
           Government username
         </label>
-        <input id="username" name="username" className="input" autoComplete="username" required />
+        <input
+          id="username"
+          name="username"
+          className="input"
+          autoComplete="off"
+          required
+        />
       </div>
       <div>
         <label htmlFor="password" className="mb-1 block text-sm font-medium">
@@ -23,7 +31,7 @@ export function GovLoginForm() {
           name="password"
           type="password"
           className="input"
-          autoComplete="current-password"
+          autoComplete="off"
           required
         />
       </div>
@@ -34,8 +42,11 @@ export function GovLoginForm() {
         <input
           id="securityCode"
           name="securityCode"
-          className="input font-mono tracking-widest"
-          placeholder="G7K2P"
+          className="input font-mono tracking-widest uppercase"
+          placeholder="ABCDE"
+          value={securityCode}
+          onChange={(e) => setSecurityCode(e.target.value.toUpperCase())}
+          autoComplete="off"
           required
           minLength={5}
         />

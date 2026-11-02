@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useRef, useState } from "react";
+import { useActionState, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { placeMarketOrderAction } from "@/actions/v4";
 import { CURRENCY_NAME, type MarketTimeframe } from "@/lib/constants";
 import {
@@ -97,7 +97,7 @@ export function SyntheticMarketTerminal({
     ? clientOverride.hasOlderHistory
     : initialHasOlderHistory;
 
-  // V4.1 Defect 6.A Fix: Visible window state `[startIndex, endIndex)` for zoom & pan
+  // Visible window state `[startIndex, endIndex)` for zoom & pan
   const [rawWindowRange, setWindowRange] = useState<VisibleWindowRange>(() =>
     clampCandleWindow(
       initialCandles.length,
@@ -123,9 +123,9 @@ export function SyntheticMarketTerminal({
     initialWindow: VisibleWindowRange;
   } | null>(null);
 
-  // Order form state (V4.1 Defect 6.B Fix: BUY, SELL, SHORT, COVER)
+  // Order form state
   const [side, setSide] = useState<OrderSideMode>("BUY");
-  const [quantity, setQuantity] = useState<number>(1);
+  const [quantityStr, setQuantityStr] = useState<string>("1");
   const [maxSlippageBp, setMaxSlippageBp] = useState<number>(200);
   const [idempotencyKey, setIdempotencyKey] = useState<string>(() =>
     typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -133,22 +133,108 @@ export function SyntheticMarketTerminal({
       : `mkt-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
   );
 
+  // Authoritative real-time market data fetcher
+  const refreshMarketData = useCallback(
+    async (targetTf?: MarketTimeframe, isBackground = false) => {
+      const tfToFetch = targetTf ?? timeframe;
+      if (!isBackground) setLoadingTf(true);
+      try {
+        const res = await fetch(`/api/market/candles?timeframe=${tfToFetch}&limit=96`, {
+          cache: "no-store",
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const nextCandles: ChartCandlePoint[] = data.candles ?? [];
+          setClientOverride({
+            candles: nextCandles,
+            currentPrice: data.currentPrice ?? currentPrice,
+            previousPrice: data.previousPrice ?? previousPrice,
+            stats24h: data.stats24h ?? stats24h,
+            hasOlderHistory: Boolean(data.hasOlderHistory),
+          });
+          if (!isBackground) {
+            setWindowRange(() =>
+              clampCandleWindow(
+                nextCandles.length,
+                Math.max(0, nextCandles.length - Math.min(48, nextCandles.length)),
+                nextCandles.length,
+              ),
+            );
+          } else {
+            // In background sync, preserve user's visible count anchored to latest candles
+            setWindowRange((prev) =>
+              clampCandleWindow(
+                nextCandles.length,
+                Math.max(0, nextCandles.length - Math.max(MIN_VISIBLE_CANDLES, prev.visibleCount)),
+                nextCandles.length,
+              ),
+            );
+          }
+        }
+      } catch {
+        // Keep existing candles on transient error
+      } finally {
+        if (!isBackground) setLoadingTf(false);
+      }
+    },
+    [timeframe, currentPrice, previousPrice, stats24h],
+  );
+
+  // Live polling: refresh market candles and live price every 15s when tab is active
+  useEffect(() => {
+    if (!tradingEnabled) return;
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        refreshMarketData(timeframe, true);
+      }
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [tradingEnabled, refreshMarketData, timeframe]);
+
+  // Non-passive wheel event listener on SVG to zoom smoothly without scrolling page
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (candles.length <= MIN_VISIBLE_CANDLES) return;
+      e.preventDefault();
+      const rect = svg.getBoundingClientRect();
+      const relX = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
+      if (e.deltaY < 0) {
+        setHoveredIdx(null);
+        setWindowRange((prev) => {
+          const clamped = clampCandleWindow(candles.length, prev.startIndex, prev.endIndex);
+          return zoomCandleWindow(candles.length, clamped, "in", relX);
+        });
+      } else if (e.deltaY > 0) {
+        setHoveredIdx(null);
+        setWindowRange((prev) => {
+          const clamped = clampCandleWindow(candles.length, prev.startIndex, prev.endIndex);
+          return zoomCandleWindow(candles.length, clamped, "out", relX);
+        });
+      }
+    };
+
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      svg.removeEventListener("wheel", onWheel);
+    };
+  }, [candles.length]);
+
   const [orderState, orderAction, orderPending] = useActionState(
     async (
       prev: Awaited<ReturnType<typeof placeMarketOrderAction>> | null,
       formData: FormData,
     ) => {
       const res = await placeMarketOrderAction(prev, formData);
-      if (res?.ok) {
-        setIdempotencyKey(
-          typeof crypto !== "undefined" && "randomUUID" in crypto
-            ? crypto.randomUUID()
-            : `mkt-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-        );
-        if (timeframe === initialTimeframe) {
-          setClientOverride(null);
-        }
-      }
+      setIdempotencyKey(
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `mkt-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      );
+      // Immediately refresh live market chart and prices after order execution
+      await refreshMarketData();
       return res;
     },
     null,
@@ -156,34 +242,7 @@ export function SyntheticMarketTerminal({
 
   async function selectTimeframe(nextTf: MarketTimeframe) {
     setTimeframe(nextTf);
-    setLoadingTf(true);
-    try {
-      const res = await fetch(`/api/market/candles?timeframe=${nextTf}&limit=96`, {
-        cache: "no-store",
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const nextCandles: ChartCandlePoint[] = data.candles ?? [];
-        setClientOverride({
-          candles: nextCandles,
-          currentPrice: data.currentPrice ?? currentPrice,
-          previousPrice: data.previousPrice ?? previousPrice,
-          stats24h: data.stats24h ?? stats24h,
-          hasOlderHistory: Boolean(data.hasOlderHistory),
-        });
-        setWindowRange(
-          clampCandleWindow(
-            nextCandles.length,
-            Math.max(0, nextCandles.length - Math.min(48, nextCandles.length)),
-            nextCandles.length,
-          ),
-        );
-      }
-    } catch {
-      // Keep existing candles on transient offline error
-    } finally {
-      setLoadingTf(false);
-    }
+    await refreshMarketData(nextTf);
   }
 
   async function loadOlderCandles() {
@@ -240,24 +299,36 @@ export function SyntheticMarketTerminal({
 
   function handleZoomIn() {
     setHoveredIdx(null);
-    setWindowRange((prev) => zoomCandleWindow(candles.length, prev, "in", 1.0));
+    setWindowRange((prev) => {
+      const clamped = clampCandleWindow(candles.length, prev.startIndex, prev.endIndex);
+      return zoomCandleWindow(candles.length, clamped, "in", 1.0);
+    });
   }
 
   function handleZoomOut() {
     setHoveredIdx(null);
-    setWindowRange((prev) => zoomCandleWindow(candles.length, prev, "out", 1.0));
+    setWindowRange((prev) => {
+      const clamped = clampCandleWindow(candles.length, prev.startIndex, prev.endIndex);
+      return zoomCandleWindow(candles.length, clamped, "out", 1.0);
+    });
   }
 
   function handlePanLeft() {
     setHoveredIdx(null);
     const step = Math.max(4, Math.round(windowRange.visibleCount * 0.25));
-    setWindowRange((prev) => panCandleWindow(candles.length, prev, -step));
+    setWindowRange((prev) => {
+      const clamped = clampCandleWindow(candles.length, prev.startIndex, prev.endIndex);
+      return panCandleWindow(candles.length, clamped, -step);
+    });
   }
 
   function handlePanRight() {
     setHoveredIdx(null);
     const step = Math.max(4, Math.round(windowRange.visibleCount * 0.25));
-    setWindowRange((prev) => panCandleWindow(candles.length, prev, step));
+    setWindowRange((prev) => {
+      const clamped = clampCandleWindow(candles.length, prev.startIndex, prev.endIndex);
+      return panCandleWindow(candles.length, clamped, step);
+    });
   }
 
   function handleResetFit() {
@@ -303,6 +374,7 @@ export function SyntheticMarketTerminal({
     const { yMin, yMax, ySpan, yTicks, maxVolume } = computeVisibleYScale(
       visibleCandles,
       currentPrice,
+      true,
     );
 
     const priceToY = (p: number) =>
@@ -344,7 +416,7 @@ export function SyntheticMarketTerminal({
     side === "SELL" && portfolio.unitsHeld === 0 && shortSellingEnabled;
   const effectiveSide: OrderSideMode = willAutoShortOnSell ? "SHORT" : side;
 
-  const safeQty = Number.isFinite(quantity) && quantity >= 1 ? Math.trunc(quantity) : 1;
+  const safeQty = Math.max(1, Math.floor(Number(quantityStr) || 1));
   const estNotional = safeQty * currentPrice;
   const estShortCollateral = Math.max(
     1,
@@ -370,10 +442,10 @@ export function SyntheticMarketTerminal({
 
   const maxActionableUnits = useMemo(() => {
     if (effectiveSide === "BUY") {
-      return Math.max(1, Math.min(maxOrderUnits, Math.floor(userBalance / Math.max(1, currentPrice))));
+      return Math.min(maxOrderUnits, Math.floor(userBalance / Math.max(1, currentPrice)));
     }
     if (effectiveSide === "SELL") {
-      return Math.max(1, Math.min(maxOrderUnits, portfolio.unitsHeld));
+      return Math.min(maxOrderUnits, portfolio.unitsHeld);
     }
     if (effectiveSide === "SHORT") {
       const unitCollateral = Math.max(
@@ -382,10 +454,10 @@ export function SyntheticMarketTerminal({
       );
       const byBalance = Math.floor(userBalance / unitCollateral);
       const byCap = Math.max(0, maxShortUnitsPerUser - shortUnitsHeld);
-      return Math.max(1, Math.min(maxOrderUnits, byBalance, byCap));
+      return Math.min(maxOrderUnits, byBalance, byCap);
     }
     // COVER
-    return Math.max(1, Math.min(maxOrderUnits, shortUnitsHeld));
+    return Math.min(maxOrderUnits, shortUnitsHeld);
   }, [
     effectiveSide,
     maxOrderUnits,
@@ -518,8 +590,19 @@ export function SyntheticMarketTerminal({
                 </button>
               </div>
 
-              {/* Explicit Zoom / Pan / Reset / Load History toolbar */}
+              {/* Explicit Zoom / Pan / Reset / Refresh toolbar */}
               <div className="flex flex-wrap items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => refreshMarketData()}
+                  disabled={loadingTf}
+                  data-testid="chart-refresh"
+                  title="Refresh latest candles and market price"
+                  className="flex items-center gap-1 rounded border border-border bg-surface px-2 py-1 text-[11px] font-medium hover:bg-border/40 disabled:opacity-50"
+                >
+                  <span className={loadingTf ? "inline-block animate-spin" : ""}>↻</span>
+                  <span>{loadingTf ? "Syncing…" : "Live Sync"}</span>
+                </button>
                 {hasOlderHistory && (
                   <button
                     type="button"
@@ -528,7 +611,7 @@ export function SyntheticMarketTerminal({
                     className="rounded border border-border bg-surface px-2 py-1 text-[11px] font-medium hover:bg-border/40"
                     title="Load older historical candles from database / archive"
                   >
-                    {loadingOlder ? "Loading…" : "⇤ Load Older"}
+                    {loadingOlder ? "Loading…" : "⇤ Older"}
                   </button>
                 )}
                 <button
@@ -549,7 +632,7 @@ export function SyntheticMarketTerminal({
                   title="Zoom In (+)"
                   className="rounded border border-border bg-surface px-2.5 py-1 font-mono text-xs font-bold hover:bg-border/40 disabled:opacity-40"
                 >
-                  + Zoom In
+                  +
                 </button>
                 <button
                   type="button"
@@ -559,7 +642,7 @@ export function SyntheticMarketTerminal({
                   title="Zoom Out (-)"
                   className="rounded border border-border bg-surface px-2.5 py-1 font-mono text-xs font-bold hover:bg-border/40 disabled:opacity-40"
                 >
-                  − Zoom Out
+                  −
                 </button>
                 <button
                   type="button"
@@ -578,7 +661,7 @@ export function SyntheticMarketTerminal({
                   title="Reset zoom and fit latest candles"
                   className="rounded border border-border bg-surface px-2 py-1 text-[11px] font-medium hover:bg-border/40"
                 >
-                  Reset / Fit
+                  Reset
                 </button>
               </div>
             </div>
@@ -630,21 +713,12 @@ export function SyntheticMarketTerminal({
                   setHoveredIdx(null);
                   dragStateRef.current = null;
                 }}
-                onWheel={(e) => {
-                  if (candles.length <= MIN_VISIBLE_CANDLES) return;
-                  e.preventDefault();
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const relX = Math.max(
-                    0,
-                    Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)),
-                  );
-                  if (e.deltaY < 0) {
-                    setWindowRange((prev) => zoomCandleWindow(candles.length, prev, "in", relX));
-                  } else if (e.deltaY > 0) {
-                    setWindowRange((prev) => zoomCandleWindow(candles.length, prev, "out", relX));
-                  }
-                }}
                 onPointerDown={(e) => {
+                  try {
+                    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+                  } catch {
+                    // Safe fallback
+                  }
                   dragStateRef.current = {
                     active: true,
                     startX: e.clientX,
@@ -666,7 +740,15 @@ export function SyntheticMarketTerminal({
                     );
                   }
                 }}
-                onPointerUp={() => {
+                onPointerUp={(e) => {
+                  try {
+                    (e.currentTarget as Element).releasePointerCapture?.(e.pointerId);
+                  } catch {
+                    // Safe fallback
+                  }
+                  dragStateRef.current = null;
+                }}
+                onPointerCancel={() => {
                   dragStateRef.current = null;
                 }}
               >
@@ -695,6 +777,37 @@ export function SyntheticMarketTerminal({
                   );
                 })}
 
+                {/* Live Current Price Horizontal Benchmark Line & Axis Badge */}
+                {Number.isFinite(currentPrice) && (
+                  <g>
+                    <line
+                      x1={chartGeometry.padLeft}
+                      y1={chartGeometry.priceToY(currentPrice)}
+                      x2={chartGeometry.width - chartGeometry.padRight}
+                      y2={chartGeometry.priceToY(currentPrice)}
+                      stroke="#137333"
+                      strokeWidth={1.5}
+                      strokeDasharray="4 3"
+                    />
+                    <rect
+                      x={chartGeometry.padLeft - 48}
+                      y={chartGeometry.priceToY(currentPrice) - 7}
+                      width={44}
+                      height={14}
+                      rx={2}
+                      fill="#137333"
+                    />
+                    <text
+                      x={chartGeometry.padLeft - 26}
+                      y={chartGeometry.priceToY(currentPrice) + 3.5}
+                      textAnchor="middle"
+                      className="fill-white font-mono text-[9px] font-bold"
+                    >
+                      {currentPrice} A
+                    </text>
+                  </g>
+                )}
+
                 {/* Separator between price pane and volume pane */}
                 <line
                   x1={chartGeometry.padLeft}
@@ -722,9 +835,9 @@ export function SyntheticMarketTerminal({
                   const bodyTop = Math.min(yOpen, yClose);
                   const bodyHeight = Math.max(2, Math.abs(yClose - yOpen));
 
-                  // Volume bar in bottom strip (height up to 34px)
-                  const volMaxH = 34;
-                  const volBaseY = chartGeometry.height - 14;
+                  // Volume bar in bottom strip (height up to 30px)
+                  const volMaxH = 30;
+                  const volBaseY = chartGeometry.height - 18;
                   const volH =
                     c.volumeUnits > 0
                       ? Math.max(3, (c.volumeUnits / chartGeometry.maxVolume) * volMaxH)
@@ -739,14 +852,40 @@ export function SyntheticMarketTerminal({
                       className="cursor-crosshair"
                     >
                       {isHovered && (
-                        <line
-                          x1={cx}
-                          y1={chartGeometry.padTop}
-                          x2={cx}
-                          y2={volBaseY}
-                          stroke="#999994"
-                          strokeDasharray="2 2"
-                        />
+                        <>
+                          <line
+                            x1={cx}
+                            y1={chartGeometry.padTop}
+                            x2={cx}
+                            y2={volBaseY}
+                            stroke="#6b7280"
+                            strokeDasharray="2 2"
+                          />
+                          <line
+                            x1={chartGeometry.padLeft}
+                            y1={yClose}
+                            x2={chartGeometry.width - chartGeometry.padRight}
+                            y2={yClose}
+                            stroke="#6b7280"
+                            strokeDasharray="2 2"
+                          />
+                          <rect
+                            x={chartGeometry.width - chartGeometry.padRight + 2}
+                            y={yClose - 7}
+                            width={32}
+                            height={14}
+                            rx={2}
+                            fill="#374151"
+                          />
+                          <text
+                            x={chartGeometry.width - chartGeometry.padRight + 18}
+                            y={yClose + 3.5}
+                            textAnchor="middle"
+                            className="fill-white font-mono text-[9px] font-semibold"
+                          >
+                            {c.close}
+                          </text>
+                        </>
                       )}
                       {/* High-Low Wick */}
                       <line
@@ -786,14 +925,52 @@ export function SyntheticMarketTerminal({
                     </g>
                   );
                 })}
+
+                {/* X-Axis Time / Date Labels along bottom */}
+                {visibleCandles.map((c, idx) => {
+                  const count = Math.max(1, visibleCandles.length);
+                  const step = Math.max(1, Math.round(count / 6));
+                  if (idx !== 0 && idx !== count - 1 && idx % step !== 0) return null;
+                  const slotW = chartGeometry.plotW / count;
+                  const cx = chartGeometry.padLeft + slotW * (idx + 0.5);
+                  const d = new Date(c.bucketStart);
+                  const timeStr = d.toLocaleTimeString("en-IN", {
+                    timeZone: "Asia/Kolkata",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: false,
+                  });
+
+                  return (
+                    <text
+                      key={`time-${c.bucketStart}`}
+                      x={cx}
+                      y={chartGeometry.height - 4}
+                      textAnchor="middle"
+                      className="fill-[#737373] font-mono text-[9px]"
+                    >
+                      {timeStr}
+                    </text>
+                  );
+                })}
+
+                {visibleCandles.length === 0 && (
+                  <text
+                    x={chartGeometry.width / 2}
+                    y={chartGeometry.height / 2}
+                    textAnchor="middle"
+                    className="fill-[#737373] text-xs font-medium"
+                  >
+                    No market candles available in this window
+                  </text>
+                )}
               </svg>
             </div>
           </div>
 
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted">
             <span>
-              Tip: Use <strong>+ Zoom In / − Zoom Out</strong>, mouse wheel, or drag horizontally to
-              inspect candles. Y-axis auto-scales to visible candles.
+              Tip: Use <strong>+ / −</strong>, mouse wheel, or drag to zoom/pan. Live green line indicates current market price.
             </span>
             <span>
               Window: #{windowRange.startIndex + 1}–#{windowRange.endIndex} of {candles.length}
@@ -961,8 +1138,9 @@ export function SyntheticMarketTerminal({
                   </label>
                   <button
                     type="button"
-                    onClick={() => setQuantity(maxActionableUnits)}
-                    className="text-[11px] font-medium text-muted underline hover:text-foreground"
+                    onClick={() => setQuantityStr(String(Math.max(1, maxActionableUnits)))}
+                    disabled={maxActionableUnits <= 0}
+                    className="text-[11px] font-medium text-muted underline hover:text-foreground disabled:opacity-40"
                   >
                     Max ({maxActionableUnits})
                   </button>
@@ -973,8 +1151,18 @@ export function SyntheticMarketTerminal({
                   min={1}
                   max={maxOrderUnits}
                   step={1}
-                  value={quantity}
-                  onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))}
+                  value={quantityStr}
+                  onChange={(e) => setQuantityStr(e.target.value)}
+                  onBlur={() => {
+                    const n = Math.floor(Number(quantityStr));
+                    if (!Number.isFinite(n) || n < 1) {
+                      setQuantityStr("1");
+                    } else if (n > maxOrderUnits) {
+                      setQuantityStr(String(maxOrderUnits));
+                    } else {
+                      setQuantityStr(String(n));
+                    }
+                  }}
                   disabled={!tradingEnabled || orderPending}
                   className="input font-mono"
                 />

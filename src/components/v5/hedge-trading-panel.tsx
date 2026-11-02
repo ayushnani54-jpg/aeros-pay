@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   openHedgePositionAction,
   closeHedgePositionAction,
@@ -44,7 +44,7 @@ export interface SerializedLeverageRequest {
 }
 
 export function HedgeTradingPanel({
-  currentPrice,
+  currentPrice: initialCurrentPrice,
   marketUpdateIntervalMinutes,
   tradingEnabled,
   userBalance,
@@ -69,16 +69,64 @@ export function HedgeTradingPanel({
   const [leverage, setLeverage] = useState<number>(2);
   const [activeTab, setActiveTab] = useState<"OPEN" | "HISTORY" | "LEVERAGE" | "GUIDE">("OPEN");
 
+  // Dynamic live price state synchronized with server market updates
+  const [livePrice, setLivePrice] = useState<number>(initialCurrentPrice);
+  const [syncing, setSyncing] = useState<boolean>(false);
+  const [lastSyncTime, setLastSyncTime] = useState<Date>(new Date());
+
+  const [orderIdempotencyKey, setOrderIdempotencyKey] = useState<string>(() =>
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `hdg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+  );
+
+  const [prevInitialPrice, setPrevInitialPrice] = useState(initialCurrentPrice);
+  if (prevInitialPrice !== initialCurrentPrice) {
+    setPrevInitialPrice(initialCurrentPrice);
+    setLivePrice(initialCurrentPrice);
+  }
+
+  const syncLivePrice = useCallback(async (isBackground = false) => {
+    if (!isBackground) setSyncing(true);
+    try {
+      const res = await fetch("/api/market/candles?timeframe=5m&limit=1", {
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Number.isFinite(data.currentPrice) && data.currentPrice > 0) {
+          setLivePrice(data.currentPrice);
+          setLastSyncTime(new Date());
+        }
+      }
+    } catch {
+      // Keep existing price on network failure
+    } finally {
+      if (!isBackground) setSyncing(false);
+    }
+  }, []);
+
+  // Periodic background polling every 15s to keep livePrice updated silently
+  useEffect(() => {
+    if (!tradingEnabled) return;
+    const timer = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        syncLivePrice(true);
+      }
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [tradingEnabled, syncLivePrice]);
+
   const parsedQty = Math.max(0, Math.floor(Number(quantity) || 0));
-  const notionalAeros = parsedQty * currentPrice;
+  const notionalAeros = parsedQty * livePrice;
   const requiredMargin = parsedQty > 0 ? Math.max(1, Math.ceil(notionalAeros / leverage)) : 0;
 
   // Liquidation price preview
   const estLiquidationPrice =
     parsedQty > 0
       ? side === "BUY"
-        ? Math.max(1, currentPrice - Math.floor(requiredMargin / parsedQty))
-        : currentPrice + Math.floor(requiredMargin / parsedQty)
+        ? Math.max(1, livePrice - Math.floor(requiredMargin / parsedQty))
+        : livePrice + Math.floor(requiredMargin / parsedQty)
       : 0;
 
   const availableLeverageOptions = LEVERAGE_LEVELS.filter((lvl) => lvl <= userMaxLeverage);
@@ -93,8 +141,16 @@ export function HedgeTradingPanel({
           ? 10
           : null;
 
+  // Calculate dynamic unrealized P&L for open positions against livePrice
+  const getLivePositionPnl = (p: SerializedHedgePosition) => {
+    if (p.status !== "OPEN") return p.unrealizedPnl;
+    return p.direction === "LONG"
+      ? (livePrice - p.entryPrice) * p.quantity
+      : (p.entryPrice - livePrice) * p.quantity;
+  };
+
   const totalMarginLocked = openPositions.reduce((sum, p) => sum + p.marginLocked, 0);
-  const totalUnrealizedPnl = openPositions.reduce((sum, p) => sum + p.unrealizedPnl, 0);
+  const totalUnrealizedPnl = openPositions.reduce((sum, p) => sum + getLivePositionPnl(p), 0);
   const longPositionsCount = openPositions.filter((p) => p.direction === "LONG").length;
   const shortPositionsCount = openPositions.filter((p) => p.direction === "SHORT").length;
 
@@ -158,9 +214,20 @@ export function HedgeTradingPanel({
         <div className="card p-4 sm:p-5 lg:col-span-5">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold">Open New Hedge Position</h3>
-            <span className="font-mono text-xs text-muted">
-              Index: <strong>{currentPrice.toLocaleString("en-IN")} A</strong>
-            </span>
+            <div className="flex items-center gap-1.5 font-mono text-xs text-muted">
+              <span>
+                Index: <strong className="text-foreground">{livePrice.toLocaleString("en-IN")} A</strong>
+              </span>
+              <button
+                type="button"
+                onClick={() => { syncLivePrice(); }}
+                disabled={syncing}
+                title={`Click to sync live market price (last synced: ${lastSyncTime.toLocaleTimeString()})`}
+                className="rounded border border-border px-1.5 py-0.5 text-[10px] font-sans hover:bg-surface disabled:opacity-50"
+              >
+                <span className={syncing ? "inline-block animate-spin" : ""}>↻</span>
+              </button>
+            </div>
           </div>
 
           {/* Two-Button BUY (Long) vs SELL (Short) Selector */}
@@ -192,7 +259,16 @@ export function HedgeTradingPanel({
           </div>
 
           <V5ActionForm
-            action={openHedgePositionAction}
+            action={async (prev, formData) => {
+              const res = await openHedgePositionAction(prev, formData);
+              setOrderIdempotencyKey(
+                typeof crypto !== "undefined" && "randomUUID" in crypto
+                  ? crypto.randomUUID()
+                  : `hdg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+              );
+              await syncLivePrice();
+              return res;
+            }}
             operationKey={`hedge-open-${side}`}
             operationTitle={`Opening ${side === "BUY" ? "LONG (BUY)" : "SHORT (SELL)"} Position`}
             processingDetail="Locking margin and recording independent hedge position on Neon..."
@@ -202,13 +278,9 @@ export function HedgeTradingPanel({
               <>
                 <input type="hidden" name="side" value={side} />
                 <input type="hidden" name="leverage" value={String(leverage)} />
-                <input type="hidden" name="expectedPrice" value={String(currentPrice)} />
+                <input type="hidden" name="expectedPrice" value={String(livePrice)} />
                 <input type="hidden" name="maxSlippageBp" value="500" />
-                <input
-                  type="hidden"
-                  name="idempotencyKey"
-                  value={`hdg-${side}-${parsedQty}-${leverage}-${currentPrice}`}
-                />
+                <input type="hidden" name="idempotencyKey" value={orderIdempotencyKey} />
 
                 <div>
                   <div className="flex items-center justify-between text-xs">
@@ -405,105 +477,112 @@ export function HedgeTradingPanel({
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {openPositions.map((pos) => (
-                    <div
-                      key={pos.id}
-                      className="rounded-xl border border-border bg-surface/60 p-3.5 transition-all hover:border-black/30"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-xs font-bold">
-                            {pos.positionNumber}
-                          </span>
-                          <span
-                            className={`rounded px-2 py-0.5 text-[11px] font-bold ${
-                              pos.direction === "LONG"
-                                ? "bg-[#eaf7ee] text-[#146c2e]"
-                                : "bg-[#fdecea] text-[#b3261e]"
-                            }`}
+                  {openPositions.map((pos) => {
+                    const currentLivePnl = getLivePositionPnl(pos);
+                    return (
+                      <div
+                        key={pos.id}
+                        className="rounded-xl border border-border bg-surface/60 p-3.5 transition-all hover:border-black/30"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-xs font-bold">
+                              {pos.positionNumber}
+                            </span>
+                            <span
+                              className={`rounded px-2 py-0.5 text-[11px] font-bold ${
+                                pos.direction === "LONG"
+                                  ? "bg-[#eaf7ee] text-[#146c2e]"
+                                  : "bg-[#fdecea] text-[#b3261e]"
+                              }`}
+                            >
+                              {pos.direction === "LONG" ? "BUY · LONG" : "SELL · SHORT"}
+                            </span>
+                            <span className="rounded bg-black px-1.5 py-0.5 font-mono text-[11px] font-bold text-white">
+                              {pos.leverage}x
+                            </span>
+                            <span className="text-xs font-semibold">
+                              {pos.quantity.toLocaleString("en-IN")} units
+                            </span>
+                          </div>
+
+                          <V5ActionForm
+                            action={async (prev, formData) => {
+                              const res = await closeHedgePositionAction(prev, formData);
+                              await syncLivePrice();
+                              return res;
+                            }}
+                            operationKey={`close-pos-${pos.id}`}
+                            operationTitle={`Closing ${pos.positionNumber} (${pos.direction})`}
+                            processingDetail="Settling position P&L and releasing margin..."
+                            className="inline-block"
                           >
-                            {pos.direction === "LONG" ? "BUY · LONG" : "SELL · SHORT"}
-                          </span>
-                          <span className="rounded bg-black px-1.5 py-0.5 font-mono text-[11px] font-bold text-white">
-                            {pos.leverage}x
-                          </span>
-                          <span className="text-xs font-semibold">
-                            {pos.quantity.toLocaleString("en-IN")} units
-                          </span>
+                            {(pending) => (
+                              <>
+                                <input type="hidden" name="positionId" value={pos.id} />
+                                <input
+                                  type="hidden"
+                                  name="expectedPrice"
+                                  value={String(livePrice)}
+                                />
+                                <input type="hidden" name="maxSlippageBp" value="500" />
+                                <input
+                                  type="hidden"
+                                  name="idempotencyKey"
+                                  value={`close-${pos.id}-${Date.now()}`}
+                                />
+                                <button
+                                  type="submit"
+                                  disabled={pending || !tradingEnabled}
+                                  className="btn btn-primary px-3 py-1 text-xs"
+                                >
+                                  {pending ? "Closing..." : "Close Position"}
+                                </button>
+                              </>
+                            )}
+                          </V5ActionForm>
                         </div>
 
-                        <V5ActionForm
-                          action={closeHedgePositionAction}
-                          operationKey={`close-pos-${pos.id}`}
-                          operationTitle={`Closing ${pos.positionNumber} (${pos.direction})`}
-                          processingDetail="Settling position P&L and releasing margin..."
-                          className="inline-block"
-                        >
-                          {(pending) => (
-                            <>
-                              <input type="hidden" name="positionId" value={pos.id} />
-                              <input
-                                type="hidden"
-                                name="expectedPrice"
-                                value={String(currentPrice)}
-                              />
-                              <input type="hidden" name="maxSlippageBp" value="500" />
-                              <input
-                                type="hidden"
-                                name="idempotencyKey"
-                                value={`close-${pos.id}-${currentPrice}`}
-                              />
-                              <button
-                                type="submit"
-                                disabled={pending || !tradingEnabled}
-                                className="btn btn-primary px-3 py-1 text-xs"
-                              >
-                                {pending ? "Closing..." : "Close Position"}
-                              </button>
-                            </>
-                          )}
-                        </V5ActionForm>
-                      </div>
-
-                      <div className="mt-2.5 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
-                        <div>
-                          <span className="text-[11px] text-muted">Entry Price</span>
-                          <p className="font-mono font-semibold">
-                            {pos.entryPrice.toLocaleString("en-IN")} A
-                          </p>
-                        </div>
-                        <div>
-                          <span className="text-[11px] text-muted">Current Price</span>
-                          <p className="font-mono font-semibold">
-                            {currentPrice.toLocaleString("en-IN")} A
-                          </p>
-                        </div>
-                        <div>
-                          <span className="text-[11px] text-muted">Margin Locked</span>
-                          <p className="font-mono font-semibold">
-                            {pos.marginLocked.toLocaleString("en-IN")} A
-                          </p>
-                        </div>
-                        <div>
-                          <span className="text-[11px] text-muted">Liq. Price</span>
-                          <p className="font-mono font-semibold text-amber-800">
-                            {pos.liquidationPrice.toLocaleString("en-IN")} A
-                          </p>
-                        </div>
-                        <div>
-                          <span className="text-[11px] text-muted">Unrealized P&amp;L</span>
-                          <p
-                            className={`font-mono font-bold ${
-                              pos.unrealizedPnl >= 0 ? "text-[#146c2e]" : "text-[#b3261e]"
-                            }`}
-                          >
-                            {pos.unrealizedPnl >= 0 ? "+" : ""}
-                            {pos.unrealizedPnl.toLocaleString("en-IN")} A
-                          </p>
+                        <div className="mt-2.5 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
+                          <div>
+                            <span className="text-[11px] text-muted">Entry Price</span>
+                            <p className="font-mono font-semibold">
+                              {pos.entryPrice.toLocaleString("en-IN")} A
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-[11px] text-muted">Current Price</span>
+                            <p className="font-mono font-semibold">
+                              {livePrice.toLocaleString("en-IN")} A
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-[11px] text-muted">Margin Locked</span>
+                            <p className="font-mono font-semibold">
+                              {pos.marginLocked.toLocaleString("en-IN")} A
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-[11px] text-muted">Liq. Price</span>
+                            <p className="font-mono font-semibold text-amber-800">
+                              {pos.liquidationPrice.toLocaleString("en-IN")} A
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-[11px] text-muted">Live Unrealized P&amp;L</span>
+                            <p
+                              className={`font-mono font-bold ${
+                                currentLivePnl >= 0 ? "text-[#146c2e]" : "text-[#b3261e]"
+                              }`}
+                            >
+                              {currentLivePnl >= 0 ? "+" : ""}
+                              {currentLivePnl.toLocaleString("en-IN")} A
+                            </p>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -536,7 +615,7 @@ export function HedgeTradingPanel({
                         </span>
                         <span className="font-medium">
                           {pos.quantity} units · Entry {pos.entryPrice} A → Exit{" "}
-                          {pos.closePrice ?? currentPrice} A
+                          {pos.closePrice ?? livePrice} A
                         </span>
                         <span className="badge bg-surface text-[10px]">{pos.status}</span>
                       </div>

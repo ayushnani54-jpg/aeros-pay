@@ -1,6 +1,6 @@
 "use server";
 
-import { requireUser, requireGovernment } from "@/lib/auth";
+import { requireUser, requireGovernment, getCurrentUser } from "@/lib/auth";
 import {
   getOrCreateThread,
   markThreadReadByGovernment,
@@ -14,9 +14,25 @@ import {
   supportMessageSchema,
   supportReplySchema,
   supportStatusSchema,
+  supportRequestSchema,
 } from "@/lib/validators";
+import { submitSupportRequest } from "@/lib/support-web3forms";
 import { revalidatePath } from "next/cache";
 import type { ActionResult } from "./auth";
+import { headers } from "next/headers";
+
+function firstZodError(err: unknown): string {
+  if (
+    err &&
+    typeof err === "object" &&
+    "issues" in err &&
+    Array.isArray((err as { issues: unknown[] }).issues)
+  ) {
+    const issues = (err as { issues: { message: string }[] }).issues;
+    return issues[0]?.message ?? "Invalid input.";
+  }
+  return "Invalid input.";
+}
 
 /** A user writes to the Government. Each user has exactly one private thread. */
 export async function sendSupportMessageAction(
@@ -140,4 +156,68 @@ export async function markSupportReadByGovernmentAction(
   await markThreadReadByGovernment(threadId);
   revalidatePath("/gov/support");
   return { ok: true, data: undefined };
+}
+
+// ---------------------------------------------------------------------------
+// V6 In-App Support Desk & Web3Forms Priority Submission
+// ---------------------------------------------------------------------------
+
+export async function submitSupportAction(
+  _prev: ActionResult<{ ticketNumber: string }> | null,
+  formData: FormData,
+): Promise<ActionResult<{ ticketNumber: string }>> {
+  const user = await getCurrentUser();
+  const headerList = await headers();
+  const userAgent = headerList.get("user-agent") || null;
+  const ipAddress = headerList.get("x-forwarded-for") || headerList.get("x-real-ip") || null;
+
+  // If logged in, preferred email is authEmail or publicContactEmail if supplied
+  const emailInput = formData.get("email") || user?.authEmail || user?.publicContactEmail || "";
+
+  const parsed = supportRequestSchema.safeParse({
+    email: emailInput,
+    category: formData.get("category"),
+    severity: formData.get("severity") || "NORMAL",
+    subject: formData.get("subject"),
+    description: formData.get("description"),
+    relevantModule: formData.get("relevantModule") || undefined,
+    stepsToReproduce: formData.get("stepsToReproduce") || undefined,
+    expectedBehaviour: formData.get("expectedBehaviour") || undefined,
+    actualBehaviour: formData.get("actualBehaviour") || undefined,
+    botcheck: formData.get("botcheck") || undefined,
+  });
+
+  if (!parsed.success) {
+    return { ok: false, error: firstZodError(parsed.error) };
+  }
+
+  try {
+    const result = await submitSupportRequest({
+      userId: user?.id ?? null,
+      username: user?.username ?? null,
+      email: parsed.data.email,
+      category: parsed.data.category,
+      severity: parsed.data.severity,
+      subject: parsed.data.subject,
+      description: parsed.data.description,
+      relevantModule: parsed.data.relevantModule ?? null,
+      stepsToReproduce: parsed.data.stepsToReproduce ?? null,
+      expectedBehaviour: parsed.data.expectedBehaviour ?? null,
+      actualBehaviour: parsed.data.actualBehaviour ?? null,
+      userAgent,
+      ipAddress,
+      botcheck: parsed.data.botcheck ?? null,
+    });
+
+    return {
+      ok: true,
+      data: { ticketNumber: result.ticketNumber },
+      message: result.message,
+    };
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Failed to submit support request.",
+    };
+  }
 }

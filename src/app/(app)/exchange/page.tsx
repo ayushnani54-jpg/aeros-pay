@@ -10,6 +10,7 @@ import {
   DEFAULT_EXCHANGE_DISCLOSURE,
 } from "@/lib/constants";
 import { formatDateTime } from "@/lib/datetime";
+import { isFeatureEnabled } from "@/lib/feature-governance";
 import {
   CancelExchangePurchaseButton,
   ExchangePurchaseForm,
@@ -20,14 +21,26 @@ export default async function AerosExchangePage() {
   if (!ctx) return null;
 
   const { user } = ctx;
-  const [flags, policies, purchases] = await Promise.all([
+  const [flags, policies, purchases, isExchangeEnabled] = await Promise.all([
     getGovernmentFeatureFlags(),
     getActiveExchangePolicies(),
     getUserExchangePurchases(user.id, 40),
+    isFeatureEnabled("aeros_exchange"),
   ]);
 
   return (
     <div className="space-y-6">
+      {!isExchangeEnabled && (
+        <div className="card p-5 border-amber-500/40 bg-amber-500/10 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-amber-500 text-lg">⚠️</span>
+            <h3 className="font-semibold text-foreground text-sm">Exchange Purchases Temporarily Paused</h3>
+          </div>
+          <p className="text-xs text-muted leading-relaxed">
+            New INR exchange package acquisitions are currently disabled by Government administration for the V6 rollout. Existing Aeros balances and completed purchases remain fully intact.
+          </p>
+        </div>
+      )}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Aeros Exchange</h1>

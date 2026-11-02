@@ -5,6 +5,8 @@ import { government } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { requireGovernment, requireUser } from "@/lib/auth";
+import { assertFeatureEnabled } from "@/lib/feature-governance";
+import { canUserTransact } from "@/lib/status";
 import { recordAudit } from "@/lib/audit";
 import {
   cancelMyExchangePurchase,
@@ -231,6 +233,10 @@ export async function requestExchangePurchaseAction(
   let user;
   try {
     user = await requireUser();
+    if (!canUserTransact(user)) {
+      return { ok: false, error: "Only verified active members without pending migrations may purchase packages." };
+    }
+    await assertFeatureEnabled("aeros_exchange", "Aeros Exchange");
   } catch (e) {
     return { ok: false, error: v4ErrMsg(e, "You must be signed in.") };
   }
@@ -269,6 +275,10 @@ export async function cancelMyExchangePurchaseAction(
   let user;
   try {
     user = await requireUser();
+    if (!canUserTransact(user)) {
+      return { ok: false, error: "Only verified active members without pending migrations may purchase packages." };
+    }
+    await assertFeatureEnabled("aeros_exchange", "Aeros Exchange");
   } catch (e) {
     return { ok: false, error: v4ErrMsg(e, "You must be signed in.") };
   }
@@ -345,6 +355,10 @@ export async function placeMarketOrderAction(
   let user;
   try {
     user = await requireUser();
+    if (!canUserTransact(user)) {
+      return { ok: false, error: "Only verified active members without pending migrations may trade on the market." };
+    }
+    await assertFeatureEnabled("trading_terminal", "Synthetic Trading Terminal");
   } catch (e) {
     return { ok: false, error: v4ErrMsg(e, "You must be signed in.") };
   }
@@ -460,6 +474,10 @@ export async function createRefundRequestAction(
   let user;
   try {
     user = await requireUser();
+    if (!canUserTransact(user)) {
+      return { ok: false, error: "Only verified active members without pending migrations may purchase packages." };
+    }
+    await assertFeatureEnabled("aeros_exchange", "Aeros Exchange");
   } catch (e) {
     return { ok: false, error: v4ErrMsg(e, "You must be signed in.") };
   }

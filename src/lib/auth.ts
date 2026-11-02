@@ -76,6 +76,24 @@ export async function requireUser(): Promise<User> {
   return user;
 }
 
+/**
+ * Requires the user to have verified their email and attained ACTIVE_MEMBER level.
+ * Used for all mutating and economic operations.
+ */
+export async function requireActiveMember(): Promise<User> {
+  const user = await requireUser();
+  if (user.authEmailVerified === false) {
+    throw new Error("EMAIL_VERIFICATION_REQUIRED: You must verify your email before performing actions.");
+  }
+  if (user.accessLevel !== "ACTIVE_MEMBER") {
+    throw new Error("ACCESS_RESTRICTED_LIMITED_MEMBER: Full platform membership activation by Government is required.");
+  }
+  if (user.emailMigrationRequired) {
+    throw new Error("EMAIL_MIGRATION_REQUIRED: Please add and verify your email address to continue.");
+  }
+  return user;
+}
+
 /** Throws if there is no authenticated Government session. */
 export async function requireGovernment(): Promise<Government> {
   const gov = await getCurrentGovernment();

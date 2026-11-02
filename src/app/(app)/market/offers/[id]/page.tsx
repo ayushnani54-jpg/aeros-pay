@@ -4,6 +4,7 @@ import { getActingContext } from "@/lib/auth";
 import { getOfferById, getOrdersForBuyer } from "@/lib/marketplace";
 import { OfferStatusBadge } from "@/components/status-badge";
 import { PlaceOrderForm } from "@/components/forms/marketplace-forms";
+import { MarketplaceExportControls } from "@/components/marketplace/marketplace-export-controls";
 import { CURRENCY_NAME, MARKETPLACE_OPEN_ORDER_STATUSES } from "@/lib/constants";
 import { formatDate } from "@/lib/datetime";
 
@@ -89,6 +90,17 @@ export default async function OfferPage({ params }: PageProps<"/market/offers/[i
           <dd>{formatDate(offer.createdAt)}</dd>
         </dl>
       </section>
+
+      <MarketplaceExportControls
+        title={offer.title}
+        category={offer.category}
+        priceText={`${offer.unitPrice.toLocaleString()} ${CURRENCY_NAME}`}
+        sellerName={companyName}
+        sellerHandle={companyUsername}
+        description={offer.description}
+        listedDate={formatDate(offer.createdAt)}
+        isOwner={isOwner}
+      />
 
       {isOwner && (
         <div className="card p-5">

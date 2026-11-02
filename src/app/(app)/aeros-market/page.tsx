@@ -17,6 +17,7 @@ import {
 } from "@/components/v5/hedge-trading-panel";
 import { db } from "@/db/client";
 import { government } from "@/db/schema";
+import { isFeatureEnabled } from "@/lib/feature-governance";
 
 export default async function AerosMarketPage() {
   const ctx = await getActingContext();
@@ -104,8 +105,21 @@ export default async function AerosMarketPage() {
     isHighVolatility: c.isHighVolatility,
   }));
 
+  const isTradingEnabled = await isFeatureEnabled("trading_terminal");
+
   return (
     <div className="space-y-6">
+      {!isTradingEnabled && (
+        <div className="card p-5 border-amber-500/40 bg-amber-500/10 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-amber-500 text-lg">⚠️</span>
+            <h3 className="font-semibold text-foreground text-sm">Trading Terminal Temporarily Paused</h3>
+          </div>
+          <p className="text-xs text-muted leading-relaxed">
+            Synthetic market order executions and new hedge positions are currently disabled by Government administration for the V6 rollout. Existing positions, collateral, and portfolio balances are fully preserved.
+          </p>
+        </div>
+      )}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
@@ -139,19 +153,6 @@ export default async function AerosMarketPage() {
         </section>
       ) : (
         <>
-          {/* V5 Independent Hedge Trading & Leverage Progression Panel */}
-          <HedgeTradingPanel
-            currentPrice={currentPrice}
-            marketUpdateIntervalMinutes={marketUpdateIntervalMinutes}
-            tradingEnabled={flags.tradingEnabled}
-            userBalance={user.balance}
-            maxOrderUnits={chart15m.state.maxOrderUnits}
-            userMaxLeverage={user.maxLeverage ?? 2}
-            openPositions={serializedOpenPositions}
-            closedPositions={serializedClosedPositions}
-            leverageRequests={serializedLeverageRequests}
-          />
-
           {/* Interactive Candlestick Chart & Spot/Collateralized Terminal */}
           <SyntheticMarketTerminal
             initialTimeframe="15m"
@@ -185,6 +186,19 @@ export default async function AerosMarketPage() {
             stats24h={chart15m.stats24h}
             initialCandles={serializedCandles}
             initialHasOlderHistory={chart15m.hasOlderHistory}
+          />
+
+          {/* V5 Independent Hedge Trading & Leverage Progression Panel */}
+          <HedgeTradingPanel
+            currentPrice={currentPrice}
+            marketUpdateIntervalMinutes={marketUpdateIntervalMinutes}
+            tradingEnabled={flags.tradingEnabled}
+            userBalance={user.balance}
+            maxOrderUnits={chart15m.state.maxOrderUnits}
+            userMaxLeverage={user.maxLeverage ?? 2}
+            openPositions={serializedOpenPositions}
+            closedPositions={serializedClosedPositions}
+            leverageRequests={serializedLeverageRequests}
           />
         </>
       )}

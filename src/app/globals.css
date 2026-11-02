@@ -14,6 +14,21 @@
   --accent: #111111;
 }
 
+:root[data-theme="dark"],
+html.dark {
+  --background: #0d1117;
+  --foreground: #f0f6fc;
+  --muted: #8b949e;
+  --border: #21262d;
+  --border-strong: #30363d;
+  --surface: #161b22;
+  --danger: #f85149;
+  --danger-bg: #3c1e1e;
+  --success: #3fb950;
+  --success-bg: #132e1e;
+  --accent: #58a6ff;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -96,6 +111,44 @@ body {
 }
 .btn-danger:hover {
   background: var(--danger-bg);
+}
+
+/* Dark Mode Overrides */
+html.dark .input {
+  background: #161b22;
+  color: var(--foreground);
+  border-color: var(--border-strong);
+}
+html.dark .input:focus {
+  border-color: #58a6ff;
+}
+html.dark .btn-primary {
+  background: #f0f6fc;
+  color: #0d1117;
+  border-color: #f0f6fc;
+}
+html.dark .btn-primary:hover {
+  background: #c9d1d9;
+}
+html.dark .btn-secondary {
+  background: #161b22;
+  color: #f0f6fc;
+  border-color: var(--border-strong);
+}
+html.dark .btn-secondary:hover {
+  background: #21262d;
+}
+html.dark .btn-danger {
+  background: #161b22;
+  color: #f85149;
+  border-color: #8b2520;
+}
+html.dark .btn-danger:hover {
+  background: var(--danger-bg);
+}
+html.dark ::selection {
+  background: #58a6ff;
+  color: #0d1117;
 }
 
 .badge {

@@ -9,6 +9,9 @@ import { getPublicMediaFeed } from "@/lib/media";
 import { CURRENCY_NAME } from "@/lib/constants";
 import { GovV4FeatureTogglesForm } from "@/components/v4/v4-forms";
 import { GovControlRoomV5Panel } from "@/components/v5/gov-control-room-v5-panel";
+import { GovV6ControlRoomPanel } from "@/components/v6/gov-v6-control-room-panel";
+import { getPlatformFeatureFlags } from "@/lib/feature-governance";
+import { getAllGovernmentContent } from "@/lib/public-content";
 
 /**
  * Control Room — the deepest administrative view (spec §10, §11).
@@ -22,7 +25,7 @@ export default async function ControlRoomPage({ searchParams }: PageProps<"/gov/
   const params = await searchParams;
   const q = typeof params.q === "string" ? params.q : "";
 
-  const [results, overview, flags, allPublicJobs, govApplications, recentMediaPosts] =
+  const [results, overview, flags, allPublicJobs, govApplications, recentMediaPosts, v6Flags, govContent] =
     await Promise.all([
       q ? adminSearch(q) : null,
       getEconomicOverview(),
@@ -30,6 +33,8 @@ export default async function ControlRoomPage({ searchParams }: PageProps<"/gov/
       listPublicJobs(50),
       listApplicationsForEmployer({ employerType: "GOVERNMENT" }),
       getPublicMediaFeed({ limit: 30, includeModeratedForGov: true }),
+      getPlatformFeatureFlags(),
+      getAllGovernmentContent(),
     ]);
 
   const govJobs = allPublicJobs
@@ -210,6 +215,8 @@ export default async function ControlRoomPage({ searchParams }: PageProps<"/gov/
         govApplications={govApplications}
         recentMediaPosts={recentMediaPosts}
       />
+
+      <GovV6ControlRoomPanel initialFlags={v6Flags} initialContent={govContent} />
 
       <section className="card p-5">
         <h2 className="mb-3 font-medium">Administrative areas</h2>

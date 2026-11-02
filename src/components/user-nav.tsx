@@ -5,12 +5,11 @@ import { usePathname } from "next/navigation";
 import { AerosLogo } from "./logo";
 import { logoutAction } from "@/actions/auth";
 import { APP_NAME } from "@/lib/constants";
+import { ThemeToggle } from "./theme/theme-toggle";
 
 /**
- * Navigation. Same visual language as V1 — a sticky top bar on desktop and a
- * fixed five-item tab bar on mobile. "My Company" only appears for users who
- * actually own an approved company (spec §62), so the experience for everyone
- * else is unchanged from V1.
+ * Navigation. Clean visual language supporting light & dark themes.
+ * Reflects V6 feature governance with direct Support access.
  */
 
 type NavItem = { href: string; label: string; icon: IconName };
@@ -20,18 +19,17 @@ const PRIMARY: NavItem[] = [
   { href: "/dashboard", label: "Home", icon: "home" },
   { href: "/pay", label: "Pay", icon: "send" },
   { href: "/market", label: "Marketplace & Jobs", icon: "list" },
-  { href: "/aeros-market", label: "Market Index", icon: "list" },
   { href: "/media", label: "Aeros Media", icon: "updates" },
   { href: "/people", label: "People", icon: "people" },
   { href: "/companies", label: "Companies", icon: "company" },
   { href: "/transactions", label: "Activity", icon: "list" },
+  { href: "/support", label: "Support", icon: "updates" },
 ];
 
 const SECONDARY: NavItem[] = [
-  { href: "/aeros-market", label: "Trading & Index", icon: "list" },
   { href: "/market", label: "Goods & Jobs", icon: "list" },
   { href: "/media", label: "Aeros Media", icon: "updates" },
-  { href: "/exchange", label: "Exchange", icon: "send" },
+  { href: "/support", label: "Support Desk", icon: "updates" },
   { href: "/refunds", label: "Refunds", icon: "updates" },
   { href: "/market/orders", label: "My Orders", icon: "list" },
   { href: "/market/contracts", label: "Contracts", icon: "updates" },
@@ -39,18 +37,13 @@ const SECONDARY: NavItem[] = [
   { href: "/market/leaderboard", label: "Leaderboard", icon: "list" },
   { href: "/notifications", label: "Notifications", icon: "updates" },
   { href: "/updates", label: "Updates", icon: "updates" },
-  { href: "/contact-government", label: "Support", icon: "updates" },
-  { href: "/profile", label: "Profile", icon: "profile" },
+  { href: "/profile", label: "Profile & Settings", icon: "profile" },
 ];
 
-/**
- * Mobile bottom bar keeps five key destinations for quick thumb access,
- * while the top scrollable pill bar provides one-tap access to all V5 modules.
- */
 const MOBILE: NavItem[] = [
   { href: "/dashboard", label: "Home", icon: "home" },
   { href: "/pay", label: "Pay", icon: "send" },
-  { href: "/aeros-market", label: "Trade", icon: "list" },
+  { href: "/market", label: "Market", icon: "list" },
   { href: "/media", label: "Media", icon: "updates" },
   { href: "/profile", label: "Profile", icon: "profile" },
 ];
@@ -90,9 +83,9 @@ export function UserNavbar({
             <Link
               key={item.href}
               href={item.href}
-              className={`whitespace-nowrap rounded-md px-2.5 py-1.5 text-sm font-medium ${
+              className={`whitespace-nowrap rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors ${
                 isActive(pathname, item.href)
-                  ? "bg-black text-white"
+                  ? "bg-foreground text-background font-semibold"
                   : "text-muted hover:bg-surface hover:text-foreground"
               }`}
             >
@@ -102,13 +95,14 @@ export function UserNavbar({
         </nav>
 
         <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <ThemeToggle />
           <Link
             href="/notifications"
             className="relative rounded-md px-2 py-1.5 text-xs font-medium text-muted hover:bg-surface hover:text-foreground sm:text-sm"
           >
             Alerts
             {unreadCount > 0 && (
-              <span className="ml-1 rounded-full bg-black px-1.5 py-0.5 text-[10px] font-semibold text-white">
+              <span className="ml-1 rounded-full bg-foreground px-1.5 py-0.5 text-[10px] font-semibold text-background">
                 {unreadCount > 99 ? "99+" : unreadCount}
               </span>
             )}
@@ -121,7 +115,7 @@ export function UserNavbar({
         </div>
       </div>
 
-      {/* Scrollable sub-navigation row on both mobile and desktop so every V5 destination is 1 tap away */}
+      {/* Scrollable sub-navigation row on both mobile and desktop so every active destination is 1 tap away */}
       <div className="mx-auto flex max-w-5xl gap-1 overflow-x-auto px-3 pb-2 sm:px-6">
         {mobileQuickLinks.map((item) => (
           <Link
@@ -129,7 +123,7 @@ export function UserNavbar({
             href={item.href}
             className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium transition-colors ${
               isActive(pathname, item.href)
-                ? "bg-black text-white"
+                ? "bg-foreground text-background font-semibold"
                 : "bg-surface text-muted hover:text-foreground"
             }`}
           >

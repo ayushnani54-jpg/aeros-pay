@@ -25,7 +25,8 @@ import { requireOwnedCompany, CompanyError } from "@/lib/companies";
 import { hashSecret, verifySecret } from "@/lib/password";
 import { markNotificationsRead } from "@/lib/notify";
 import { recordAudit } from "@/lib/audit";
-import { canUserSend } from "@/lib/status";
+import { canUserSend, canUserTransact } from "@/lib/status";
+import { assertFeatureEnabled } from "@/lib/feature-governance";
 import {
   consumeRateLimit,
   financialKey,
@@ -69,6 +70,19 @@ export async function payAction(
           ? "Your account is banned and cannot send Aeros."
           : "Your account is suspended and cannot send Aeros right now.",
     };
+  }
+
+  if (!canUserTransact(ctx.user)) {
+    return {
+      ok: false,
+      error: "Only verified active members without pending migrations may send Aeros payments.",
+    };
+  }
+
+  try {
+    await assertFeatureEnabled("citizen_transfers", "Citizen Transfers");
+  } catch (err: unknown) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 
   // Keyed on the acting wallet from the verified session, so it counts real

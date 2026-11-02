@@ -114,6 +114,7 @@ export function panCandleWindow(
 export function computeVisibleYScale(
   visibleCandles: ChartCandlePoint[],
   fallbackPrice = 100,
+  includePrice = false,
 ): {
   yMin: number;
   yMax: number;
@@ -123,8 +124,14 @@ export function computeVisibleYScale(
 } {
   const lows = visibleCandles.map((c) => c.low);
   const highs = visibleCandles.map((c) => c.high);
-  const rawLow = lows.length > 0 ? Math.min(...lows) : Math.max(1, fallbackPrice - 5);
-  const rawHigh = highs.length > 0 ? Math.max(...highs) : fallbackPrice + 5;
+  let rawLow = lows.length > 0 ? Math.min(...lows) : Math.max(1, fallbackPrice - 5);
+  let rawHigh = highs.length > 0 ? Math.max(...highs) : fallbackPrice + 5;
+
+  if (includePrice && Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
+    rawLow = Math.min(rawLow, fallbackPrice);
+    rawHigh = Math.max(rawHigh, fallbackPrice);
+  }
+
   const pad = Math.max(2, Math.ceil((rawHigh - rawLow) * 0.12));
 
   const yMin = Math.max(1, rawLow - pad);

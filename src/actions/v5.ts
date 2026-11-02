@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { requireGovernment, requireUser, getCurrentActor, getActingContext } from "@/lib/auth";
+import { assertFeatureEnabled } from "@/lib/feature-governance";
+import { canUserTransact } from "@/lib/status";
 import {
   MarketError,
   openHedgePosition,
@@ -89,6 +91,10 @@ export async function openHedgePositionAction(
   let u;
   try {
     u = await requireUser();
+    if (!canUserTransact(u)) {
+      return { ok: false, error: "Only verified active members without pending migrations may open hedge positions." };
+    }
+    await assertFeatureEnabled("trading_terminal", "Synthetic Trading Terminal");
   } catch (e) {
     return { ok: false, error: v5ErrMsg(e, "Authentication required.") };
   }
@@ -140,6 +146,7 @@ export async function closeHedgePositionAction(
   let u;
   try {
     u = await requireUser();
+    await assertFeatureEnabled("trading_terminal", "Synthetic Trading Terminal");
   } catch (e) {
     return { ok: false, error: v5ErrMsg(e, "Authentication required.") };
   }
