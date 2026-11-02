@@ -304,9 +304,9 @@ export async function govLogoutAction() {
  * Checks uniqueness, generates an 8-digit verification code, and stores pending challenge.
  */
 export async function v6InitiateRegistrationAction(
-  _prev: ActionResult<{ email: string }> | null,
+  _prev: ActionResult<{ email: string; devCode?: string }> | null,
   formData: FormData,
-): Promise<ActionResult<{ email: string }>> {
+): Promise<ActionResult<{ email: string; devCode?: string }>> {
   const rlKey = await registerKey();
   const rl = consumeRateLimit(rlKey, REGISTER_RULE);
   if (!rl.allowed) return { ok: false, error: rateLimitMessage(rl) };
@@ -368,11 +368,14 @@ export async function v6InitiateRegistrationAction(
 
     const userMessage = dispatchResult.delivered
       ? `An 8-digit verification code has been dispatched to ${normalizedEmail}. Please check your inbox and enter the code below.`
-      : `An 8-digit verification code has been generated for ${normalizedEmail}. (Note: To receive real emails in your inbox, add RESEND_API_KEY in Vercel. For testing, your verification code is: ${challenge.code})`;
+      : `An 8-digit verification code has been generated for ${normalizedEmail}. Notice: Real inbox delivery requires GMAIL_APP_PASSWORD in Vercel settings. For testing, your verification code is: ${challenge.code}`;
 
     return {
       ok: true,
-      data: { email: normalizedEmail },
+      data: {
+        email: normalizedEmail,
+        devCode: dispatchResult.devCode,
+      },
       message: userMessage,
     };
   } catch (err: unknown) {
@@ -502,9 +505,9 @@ export async function v6ActivateMembershipAction(
  * Step 4: Existing user migration email submission.
  */
 export async function v6SubmitExistingUserEmailAction(
-  _prev: ActionResult<{ email: string }> | null,
+  _prev: ActionResult<{ email: string; devCode?: string }> | null,
   formData: FormData,
-): Promise<ActionResult<{ email: string }>> {
+): Promise<ActionResult<{ email: string; devCode?: string }>> {
   const user = await requireUser();
 
   const parsed = v6ExistingUserEmailSchema.safeParse({
@@ -545,11 +548,14 @@ export async function v6SubmitExistingUserEmailAction(
 
     const userMessage = dispatchResult.delivered
       ? `An 8-digit verification code has been dispatched to ${normalizedEmail}. Please check your inbox.`
-      : `An 8-digit verification code has been issued for ${normalizedEmail}. (Note: Add RESEND_API_KEY in Vercel to send real emails. For testing, your verification code is: ${challenge.code})`;
+      : `An 8-digit verification code has been issued for ${normalizedEmail}. Notice: Real inbox delivery requires GMAIL_APP_PASSWORD in Vercel settings. For testing, your verification code is: ${challenge.code}`;
 
     return {
       ok: true,
-      data: { email: normalizedEmail },
+      data: {
+        email: normalizedEmail,
+        devCode: dispatchResult.devCode,
+      },
       message: userMessage,
     };
   } catch (err: unknown) {

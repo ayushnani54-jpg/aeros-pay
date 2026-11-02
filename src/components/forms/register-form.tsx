@@ -10,6 +10,7 @@ export function RegisterForm() {
   const [step, setStep] = useState<"INITIATE" | "VERIFY">("INITIATE");
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
+  const [devCode, setDevCode] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
@@ -19,6 +20,7 @@ export function RegisterForm() {
     setPending(true);
     setError(null);
     setInfoMessage(null);
+    setDevCode(null);
 
     const formData = new FormData(e.currentTarget);
     const result = await v6InitiateRegistrationAction(null, formData);
@@ -33,6 +35,9 @@ export function RegisterForm() {
       setStep("VERIFY");
       if (result.message) {
         setInfoMessage(result.message);
+      }
+      if (result.data?.devCode) {
+        setDevCode(result.data.devCode);
       }
     }
   };
@@ -62,11 +67,40 @@ export function RegisterForm() {
             We sent an 8-digit verification code to <span className="font-semibold text-foreground">{email}</span>.
           </p>
           {infoMessage && (
-            <p className="mt-2 text-xs text-success font-mono bg-success-bg p-2 rounded border border-success/20">
+            <p className="mt-2 text-xs text-muted font-mono bg-surface p-2 rounded border border-border">
               {infoMessage}
             </p>
           )}
         </div>
+
+        {devCode && (
+          <div className="rounded-lg bg-amber-500/10 p-3 text-xs border border-amber-500/25 space-y-2">
+            <p className="font-semibold text-amber-600 dark:text-amber-400">
+              ⚡ Sandbox / Demo Access Code
+            </p>
+            <p className="text-muted leading-relaxed">
+              Real inbox delivery is awaiting <code>GMAIL_APP_PASSWORD</code> in Vercel. For immediate registration, your code is:
+            </p>
+            <div className="flex items-center gap-2 pt-1">
+              <span className="font-mono text-base font-bold tracking-widest text-foreground bg-surface px-3 py-1 rounded border border-border">
+                {devCode}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const input = document.getElementById("code") as HTMLInputElement;
+                  if (input) {
+                    input.value = devCode;
+                    input.dispatchEvent(new Event("input", { bubbles: true }));
+                  }
+                }}
+                className="btn btn-secondary text-xs py-1 px-3 font-medium"
+              >
+                Auto-fill Code
+              </button>
+            </div>
+          </div>
+        )}
 
         <form onSubmit={handleVerify} className="space-y-4">
           <div>
