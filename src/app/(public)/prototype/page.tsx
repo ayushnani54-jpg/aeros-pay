@@ -365,7 +365,7 @@ export default function PrototypePage() {
             <AerosLogo size={32} />
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-lg font-bold tracking-tight text-foreground">{APP_NAME}</span>
+                <h1 className="text-lg font-bold tracking-tight text-foreground">{APP_NAME} Prototype</h1>
                 <span className="rounded bg-surface px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted border border-border">
                   V6 Architecture Lab
                 </span>

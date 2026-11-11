@@ -3,8 +3,14 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { AerosLogo } from "@/components/logo";
 import { RegisterForm } from "@/components/forms/register-form";
+import { MAINTENANCE_MODE } from "@/lib/maintenance";
+import { MaintenanceView } from "@/components/maintenance-view";
 
 export default async function RegisterPage() {
+  if (MAINTENANCE_MODE) {
+    return <MaintenanceView />;
+  }
+
   const user = await getCurrentUser();
   if (user) redirect("/dashboard");
 

@@ -39,6 +39,7 @@ import {
   REGISTER_RULE,
 } from "@/lib/ratelimit";
 import { redirect } from "next/navigation";
+import { MAINTENANCE_MODE } from "@/lib/maintenance";
 
 export type ActionResult<T = undefined> =
   | (T extends undefined
@@ -67,6 +68,13 @@ export async function registerAction(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
+  if (MAINTENANCE_MODE) {
+    return {
+      ok: false,
+      error: "Aeros Pay is temporarily unavailable due to scheduled development and system upgrades. Account registrations and logins are temporarily paused.",
+    };
+  }
+
   // Before anything else, and before any database work: a registration attempt
   // that is refused here costs one map lookup instead of a transaction.
   const rlKey = await registerKey();
@@ -173,6 +181,13 @@ export async function loginAction(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
+  if (MAINTENANCE_MODE) {
+    return {
+      ok: false,
+      error: "Aeros Pay is temporarily unavailable due to scheduled development and system upgrades. Account registrations and logins are temporarily paused.",
+    };
+  }
+
   const parsed = loginSchema.safeParse({
     username: formData.get("username"),
     password: formData.get("password"),
@@ -307,6 +322,13 @@ export async function v6InitiateRegistrationAction(
   _prev: ActionResult<{ email: string; devCode?: string }> | null,
   formData: FormData,
 ): Promise<ActionResult<{ email: string; devCode?: string }>> {
+  if (MAINTENANCE_MODE) {
+    return {
+      ok: false,
+      error: "Aeros Pay is temporarily unavailable due to scheduled development and system upgrades. Account registrations are temporarily paused.",
+    };
+  }
+
   const rlKey = await registerKey();
   const rl = consumeRateLimit(rlKey, REGISTER_RULE);
   if (!rl.allowed) return { ok: false, error: rateLimitMessage(rl) };
@@ -394,6 +416,13 @@ export async function v6VerifyEmailAndCreateAccountAction(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
+  if (MAINTENANCE_MODE) {
+    return {
+      ok: false,
+      error: "Aeros Pay is temporarily unavailable due to scheduled development and system upgrades. Account registrations are temporarily paused.",
+    };
+  }
+
   const parsed = v6EmailVerifySchema.safeParse({
     email: formData.get("email"),
     code: formData.get("code"),

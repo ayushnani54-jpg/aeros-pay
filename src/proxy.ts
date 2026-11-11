@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { GOV_SESSION_COOKIE, USER_SESSION_COOKIE } from "@/lib/constants";
+import { MAINTENANCE_MODE } from "@/lib/maintenance";
 
 /**
  * Fast, edge-level redirect based on cookie *presence* only.
@@ -40,6 +41,10 @@ export function proxy(request: NextRequest) {
   const isUserArea = USER_AREAS.some(
     (prefix) => pathname === prefix || pathname.startsWith(prefix),
   );
+
+  if (MAINTENANCE_MODE && isUserArea) {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
 
   if (isGovArea) {
     if (!request.cookies.has(GOV_SESSION_COOKIE)) {

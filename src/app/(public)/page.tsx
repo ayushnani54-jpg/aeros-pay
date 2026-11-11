@@ -6,8 +6,14 @@ import { APP_NAME, CURRENCY_NAME } from "@/lib/constants";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { getPublicCommunityContent } from "@/lib/public-content";
 import { getPlatformFeatureFlags } from "@/lib/feature-governance";
+import { MAINTENANCE_MODE } from "@/lib/maintenance";
+import { MaintenanceView } from "@/components/maintenance-view";
 
 export default async function HomePage() {
+  if (MAINTENANCE_MODE) {
+    return <MaintenanceView />;
+  }
+
   const [user, gov] = await Promise.all([getCurrentUser(), getCurrentGovernment()]);
   if (user) redirect("/dashboard");
   if (gov) redirect("/gov");

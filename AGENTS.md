@@ -11,7 +11,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 # AEROS PAY — PERMANENT PROJECT INSTRUCTIONS & WORKSPACE RULES
 
 ## 1. PROJECT IDENTITY & SCOPE
-- **Product Name**: **Aeros Pay** (strictly permanent; never rename to Aerospace, Eros Pay, or any variant).
+- **Product Name**: **Aerospay** / **Aeros Pay** (strictly permanent; never rename to aerospace, Eros Pay, or any variant. Always map user dictation of "aerospace" to Aerospay).
 - **Virtual Currency**: **Aeros** (strictly whole-number integers `integer` in PostgreSQL; zero floating-point or fractional units anywhere in the application).
 - **Current Version**: **V5.0** (Next.js 16 App Router, Neon Serverless PostgreSQL + Drizzle ORM, 15-Repository GitHub Historical Archival Architecture with 900 MB Rollover Cap).
 - **Project Purpose**: A closed-loop sovereign virtual economy platform with **Citizens (Users)**, **Registered Companies**, and a central **Government (Treasury)** authority. It is designed to be a robust, secure, multi-user financial application, prioritizing correctness, data integrity, auditability, and failure recovery.

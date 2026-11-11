@@ -3,8 +3,14 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { AerosLogo } from "@/components/logo";
 import { LoginForm } from "@/components/forms/login-form";
+import { MAINTENANCE_MODE } from "@/lib/maintenance";
+import { MaintenanceView } from "@/components/maintenance-view";
 
 export default async function LoginPage() {
+  if (MAINTENANCE_MODE) {
+    return <MaintenanceView />;
+  }
+
   const user = await getCurrentUser();
   if (user) redirect("/dashboard");
 

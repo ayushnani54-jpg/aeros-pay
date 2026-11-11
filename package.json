@@ -16,13 +16,16 @@
     "test:v4": "tsx --conditions react-server scripts/test-v4.ts",
     "test:v4:1": "tsx --conditions react-server scripts/test-v4-1.ts",
     "test:v5": "tsx --conditions react-server scripts/test-v5.ts",
-    "test:v6": "tsx --conditions react-server scripts/test-v6.ts"
+    "test:v6": "tsx --conditions react-server scripts/test-v6.ts",
+    "test:e2e": "playwright test",
+    "visual:shot": "playwright-shot"
   },
   "dependencies": {
+    "@tailwindcss/oxide-linux-x64-gnu": "^4.3.5",
     "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.45.3",
     "jose": "^6.2.12",
-    "next": "16.3.6",
+    "next": "^16.3.6",
     "nodemailer": "^10.3.1",
     "pg": "^8.23.0",
     "react": "19.2.8",
@@ -31,6 +34,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@playwright/test": "1.51.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/nodemailer": "^8.0.2",
@@ -41,6 +45,7 @@
     "drizzle-kit": "^0.31.11",
     "eslint": "^9",
     "eslint-config-next": "16.3.6",
+    "playwright": "1.51.1",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
     "typescript": "^5"
